@@ -6,7 +6,7 @@ local app = require("app")
 local config = require("config")
 
 if ship == nil then
-  error("cc_vs ship API missing: computer-9 must be on the ship", 0)
+  error("cc_vs ship API missing: computer-12 must be on the ship", 0)
 end
 
 local cfg = config.default()

@@ -314,7 +314,7 @@ function M.draw(c, page, view, layout)
     if type(view.distance)=="number" and math.abs(view.forward_speed or 0)>0 then eta=number(view.distance/math.abs(view.forward_speed),0).."s" end
     paint(c, 1, 5, "ETA "..eta)
     paint(c, 1, 6, compass(view.heading, math.max(1,c.w-2)))
-    paint(c, 1, 7, "Set X/Z on computer-9 keyboard")
+    paint(c, 1, 7, "Set X/Z on computer-12 keyboard")
   elseif page == "ENG" then
     local rows = {
       {"elev_pb","E7 PB elev"},{"elev_sb","E2 SB elev"},{"elev_ps","E5 PS elev"},{"elev_ss","E3 SS elev"},

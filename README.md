@@ -1,6 +1,6 @@
 # Autopilot 3.0
 
-Single-computer flight control and bombing system for the rebuilt Valkyrien Skies bomber. Computer 9 controls ten Create Crafts & Additions electric motors, 47 CC:Tweaked redstone relays, every wired monitor, and the local terminal.
+Single-computer flight control and bombing system for the rebuilt Valkyrien Skies bomber. Computer 12 controls ten Create Crafts & Additions electric motors, 47 CC:Tweaked redstone relays, every wired monitor, and the local terminal.
 
 ## Features
 
@@ -14,7 +14,7 @@ Single-computer flight control and bombing system for the rebuilt Valkyrien Skie
 
 ## Install
 
-On computer 9:
+On computer 12:
 
 ```text
 wget run https://raw.githubusercontent.com/patrck269/Autopilot3/master/install/autopilot.lua
