@@ -129,6 +129,8 @@ function M.run(cfg, opts)
       -- The helm keeps steering after a reboot until 'rcs on'.
       if ok and msg.c == "rcs_off" then store.save(cfg.rcs_off_file, { off = true }) end
       if ok and msg.c == "rcs_on" and fs.exists(cfg.rcs_off_file) then fs.delete(cfg.rcs_off_file) end
+      -- Save at once, so a restart cannot bring the old strength back.
+      if ok and msg.c == "rcs_reset" then store.save(cfg.cal_file, ap:saved()) end
     end
     message = text
     link:reply({ ok = ok, text = text, seq = msg.seq })

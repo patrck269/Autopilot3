@@ -14,6 +14,7 @@ M.HELP = {
   "recal       forget the hover calibration",
   "rcs check   find each RCS corner (HOVER)",
   "rcs apply   use the layout it found",
+  "rcs reset   forget the learned RCS strength",
   "doors open|close  bomb bay doors",
   "salvo <1|3|5|10|all>  bombs per drop",
   "drop        drop one salvo (Y>=200, doors open)",
@@ -38,7 +39,8 @@ function M.parse(line)
     if words[2] == "apply" then return { c = "rcs_apply" } end
     if words[2] == "off" then return { c = "rcs_off" } end
     if words[2] == "on" then return { c = "rcs_on" } end
-    return nil, "rcs check | rcs apply | rcs off | rcs on"
+    if words[2] == "reset" then return { c = "rcs_reset" } end
+    return nil, "rcs check | rcs apply | rcs reset | rcs off | rcs on"
   end
   if head == "doors" then
     if words[2] == "open" or words[2] == "close" then return { c = "doors", v = words[2] } end

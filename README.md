@@ -74,6 +74,7 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 | `recal` | CAL: RECAL then CONF | Forget the hover calibration: back to the 430 RPM first guess, learned again in flight |
 | `rcs check` | SYS: RCS CHECK then CONF CHECK | In HOVER: find which motor sits at which RCS corner (see RCS check) |
 | `rcs apply` | SYS: RCS APPLY | Use the layout the check found; saved, then the computer restarts |
+| `rcs reset` | CAL: RCS RESET then CONF | Forget the learned RCS turning and sideways strength: back to the first guesses, learned again in flight. The corner layout from `rcs apply` and the bow axis stay |
 | `rcs off` / `rcs on` | SYS: RCS OFF / RCS ON | Hand steering to the Eureka helm: the RCS rests at 0 and the heading loop stops. `rcs on` takes it back and holds the heading the ship is on. The setting survives a reboot (`/ap3_rcs.off`) |
 | `doors open` / `doors close` | BOMB: DOOR OPEN / DOOR CLOSE | Bomb bay doors |
 | `salvo 1` (`3`, `5`, `10`, `all`) | BOMB: 1 3 5 10 ALL | Bombs per drop |
@@ -104,6 +105,7 @@ Each monitor is one MFD with option-select buttons around the edge. Top-row and 
 - A page is only shown on one MFD at a time. Picking a page that another MFD is showing moves it here and sends this MFD's old page there.
 - SWAP exchanges two MFDs: 1↔2 and 3↔4, with an odd last display swapping with display 1.
 - The layout is saved (`/ap3_mfd.dat`) and comes back after a reboot.
+- Pages fit any monitor size: they draw only inside the area between the buttons. On narrow monitors (two blocks wide) AP, CAL, PFD and HSI move their extra columns onto extra lines, and on a narrow, tall one BOMB stands the bay map upright with the bow at the top.
 
 At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4 ENG.
 
@@ -114,7 +116,7 @@ At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4
 | HSI | Heading-up compass rose with bearing bug and track, ground speed, drift, X/Z position |
 | ENG | Each motor's applied and desired RPM against its cap. Red: missing. A red bar: the last write failed |
 | BOMB | Bay map (bow on the left, starboard row on top): lime loaded, yellow in the next salvo, gray used, red relay missing. Bombs loaded, salvo size, doors and how long they have been open, the reason the next drop would be refused or READY. Salvo size, DOOR, DROP and RELOAD buttons |
-| CAL | Ground or airborne, sample count, hover RPM here and at target, air density, lift constant, altitude trim, mass, level trim, learned thrust and drag, learned RCS turning and sideways strength, bow axis (learned or config) |
+| CAL | Ground or airborne, sample count, hover RPM here and at target, air density, lift constant, altitude trim, mass, level trim, learned thrust and drag, learned RCS turning and sideways strength, bow axis (learned or config). RECAL and RCS RESET |
 | SYS | Flight loop health, start-up errors and warnings, live alerts, event log (RCS check results), RCS OFF/ON, RCS CHECK, RCS APPLY, DEBUG, KILL |
 | UFC | Keypad: type a number, then ALT, BRG, or SPD SET |
 

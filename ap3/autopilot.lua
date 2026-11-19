@@ -152,6 +152,16 @@ function M:command(msg, s)
     -- Hold the heading the helm left the ship on, not the old bearing.
     if s then self.tgt.brg = util.round(s.hdg) % 360 end
     return true, "rcs on: bearing " .. util.compass(self.tgt.brg)
+  elseif c == "rcs_reset" then
+    -- Forget the learned RCS turning and sideways strength: back to the
+    -- first guesses, learned again in flight. The corner layout from an RCS
+    -- check and the bow axis stay.
+    self.hdg = heading.new(self.cfg, nil)
+    local frame_ok = self.motion.frame_ok
+    self.motion = motion.new(self.cfg, self.tel)
+    self.motion.frame_ok = frame_ok
+    self:log("RCS CAL RESET")
+    return true, "rcs turning and sideways strength reset to the first guess"
   elseif c == "rcs_apply" then
     if not self.rcs_found then return false, "nothing to apply: run rcs check first" end
     self.rcs_map = self.rcs_found

@@ -503,5 +503,21 @@ do
     "a saved 15 RPM hover is discarded at start-up", string.format("%.0f RPM", bad.ap.alt:hover_rpm(plant.rho(62))))
 end
 
+print("27. rcs reset forgets the learned RCS strength, keeps the layout")
+do
+  local layout = { bow_port = "electric_motor_6", bow_stbd = "electric_motor_1",
+    stern_port = "electric_motor_0", stern_stbd = "electric_motor_4" }
+  local sim = plant.new({ y = 150, lift = 900,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 1.6, rcs_cap = 4000, rcs_map = layout } })
+  local ok = sim.ap:command({ c = "rcs_reset" }, sim.s)
+  local saved = sim.ap:saved()
+  check(ok and math.abs(sim.ap.hdg:authority() - CFG.heading.yaw_authority) < 1e-9 and saved.yaw_b == nil,
+    "turning strength back to the first guess, nothing saved for it",
+    string.format("%.2f deg/s2, saved %s", sim.ap.hdg:authority(), tostring(saved.yaw_b)))
+  check(math.abs(sim.ap.motion:sway_authority() - CFG.heading.sway_authority) < 1e-9,
+    "sideways strength back to the first guess", string.format("%.3f", sim.ap.motion:sway_authority()))
+  check(saved.rcs_map == layout, "the RCS corner layout is kept")
+end
+
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
 os.exit(failures == 0 and 0 or 1)
