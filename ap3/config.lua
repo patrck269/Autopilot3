@@ -6,16 +6,16 @@ return {
   -- motor that runs backwards. Every lift and RCS prop is a puller; the two
   -- pushers sit on the stern facing aft (positive RPM moves the ship forward).
   motors = {
-    lift_bow_port   = { name = "electric_motor_7", cap = 2750, sign = 1, label = "E7 LIFT BOW PORT" },
-    lift_bow_stbd   = { name = "electric_motor_2", cap = 2750, sign = 1, label = "E2 LIFT BOW STBD" },
-    lift_stern_port = { name = "electric_motor_5", cap = 2750, sign = 1, label = "E5 LIFT STRN PORT" },
-    lift_stern_stbd = { name = "electric_motor_3", cap = 2750, sign = 1, label = "E3 LIFT STRN STBD" },
-    bow_port        = { name = "electric_motor_6", cap = 2000, sign = 1, label = "R6 BOW PORT" },
-    bow_stbd        = { name = "electric_motor_1", cap = 2000, sign = 1, label = "R1 BOW STBD" },
-    stern_port      = { name = "electric_motor_4", cap = 2000, sign = 1, label = "R4 STRN PORT" },
-    stern_stbd      = { name = "electric_motor_0", cap = 2000, sign = 1, label = "R0 STRN STBD" },
-    thrust_port     = { name = "electric_motor_8", cap = 1500, sign = 1, label = "L8 PUSH PORT" },
-    thrust_stbd     = { name = "electric_motor_9", cap = 1500, sign = 1, label = "S9 PUSH STBD" },
+    lift_bow_port   = { name = "electric_motor_7", cap = 5500, sign = 1, label = "E7 LIFT BOW PORT" },
+    lift_bow_stbd   = { name = "electric_motor_2", cap = 5500, sign = 1, label = "E2 LIFT BOW STBD" },
+    lift_stern_port = { name = "electric_motor_5", cap = 5500, sign = 1, label = "E5 LIFT STRN PORT" },
+    lift_stern_stbd = { name = "electric_motor_3", cap = 5500, sign = 1, label = "E3 LIFT STRN STBD" },
+    bow_port        = { name = "electric_motor_6", cap = 4000, sign = 1, label = "R6 BOW PORT" },
+    bow_stbd        = { name = "electric_motor_1", cap = 4000, sign = 1, label = "R1 BOW STBD" },
+    stern_port      = { name = "electric_motor_4", cap = 4000, sign = 1, label = "R4 STRN PORT" },
+    stern_stbd      = { name = "electric_motor_0", cap = 4000, sign = 1, label = "R0 STRN STBD" },
+    thrust_port     = { name = "electric_motor_8", cap = 3000, sign = 1, label = "L8 PUSH PORT" },
+    thrust_stbd     = { name = "electric_motor_9", cap = 3000, sign = 1, label = "S9 PUSH STBD" },
   },
 
   -- Monitors used as MFDs, in display order. SWAP exchanges displays 1<->2
@@ -49,7 +49,9 @@ return {
     min_interval = { lift = 1.0, thrust = 1.0, rcs = 1.0 }, -- seconds between writes to one motor
     deadband = { lift = 5, thrust = 15, rcs = 100 },        -- smallest RPM change worth a write
     weight = { lift = 3, thrust = 2, rcs = 1.5 },            -- which group gets the next write
-    slew = { thrust = 400, lift = 300, rcs = 1000 },         -- largest RPM change per write
+    -- Largest RPM change per write. The props follow at most 32 RPM a tick
+    -- (640 RPM a second), so a pusher step past that only builds lag.
+    slew = { thrust = 600, lift = 600, rcs = 2000 },
     rcs_min_rpm = 100,    -- smaller RCS commands are sent as 0 (finer pulses for a strong RCS)
   },
 
@@ -92,14 +94,18 @@ return {
     vel_gain = 0.8,       -- (m/s^2) per m/s of speed error
     int_gain = 0.15,      -- integral (m/s^2) per (m/s * s)
     int_limit = 2.0,      -- integral limit, m/s^2
+    max_accel = 1.5,      -- largest correction (m/s^2) asked of the pushers on top of the ramp
+    probe_force = 0.25,   -- pusher force (share of full) allowed until the bow axis is confirmed
     stop_band = 0.2,      -- stopped: brake drift down to this (m/s), then the pushers rest
     hover_engage = 0.8,   -- stopped: drift (m/s) that wakes the pushers again
     hold_band = 0.3,      -- cruising within this of the target speed (m/s): thrust is held
-    hold_release = 1.0,   -- held thrust is recomputed once speed drifts this far (m/s)
+    hold_release = 0.5,   -- held thrust is recomputed once speed drifts this far (m/s)
     pitch_limit = 6,      -- degrees of acceleration-induced nose dip before thrust is held back
     -- Thrust model a = A*f - D*v|v| (f = normalised force, rpm^2/cap^2), learned in flight.
-    accel_full = 1.5,     -- first guess: m/s^2 at full pusher thrust
-    top_speed = 40,       -- first guess: speed where full thrust equals drag
+    -- First guesses for 3000 RPM pushers: force goes with RPM^2, so four times
+    -- the thrust of 1500 RPM and twice the top speed for the same drag.
+    accel_full = 6.0,     -- first guess: m/s^2 at full pusher thrust
+    top_speed = 80,       -- first guess: speed where full thrust equals drag
   },
 
   heading = {
@@ -121,20 +127,21 @@ return {
     high_speed = 20,      -- above this ground speed the heading integral works harder
     high_speed_gain = 2.0,
     -- Positive RPM pulls on every RCS corner (fixed). Only the strength is
-    -- learned in flight; these are the first guesses at full RCS.
-    yaw_authority = 2.5,  -- deg/s^2 of yaw at full RCS
-    min_authority = 0.1,  -- smallest yaw strength believed (deg/s^2)
-    max_authority = 50,   -- largest yaw strength believed; a saved value past it is discarded
+    -- learned in flight; these are the first guesses at full RCS (4000 RPM:
+    -- force goes with RPM^2, so four times the force at 2000 RPM).
+    yaw_authority = 10,   -- deg/s^2 of yaw at full RCS
+    min_authority = 0.4,  -- smallest yaw strength believed (deg/s^2)
+    max_authority = 200,  -- largest yaw strength believed; a saved value past it is discarded
     -- Turn force (share of full) a 0.5 s window needs before the strength is
     -- learned. Weaker windows mostly measure yaw from something else (a bump,
     -- an off-centre thrust line). Keep it under what a turn commands at
-    -- max_authority (about 0.06), so a high estimate can still come down.
-    learn_min_force = 0.03,
-    probe_limit = 0.2,    -- sideways force allowed until the bow axis is confirmed
+    -- max_authority (about 0.015), so a high estimate can still come down.
+    learn_min_force = 0.0075,
+    probe_limit = 0.05,   -- sideways force (share of full) allowed until the bow axis is confirmed
     -- Sideslip: drift past sway_engage (m/s) is braked with the same-side
     -- pullers until it is under sway_settle, then the sway force rests.
-    sway_authority = 0.75, -- first guess: m/s^2 sideways at full RCS
-    min_sway_authority = 0.02,
+    sway_authority = 3.0, -- first guess: m/s^2 sideways at full RCS
+    min_sway_authority = 0.08,
     sway_gain = 0.3,      -- (m/s^2) per m/s of sideslip
     sway_engage = 0.5,    -- m/s
     sway_settle = 0.15,   -- m/s
