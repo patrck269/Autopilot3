@@ -71,7 +71,7 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 | `kill` | SYS: KILL then CONF KILL | Every motor to 0 immediately |
 | `debug` | SYS: DEBUG then CONF DEBUG | Every motor at +15 RPM as written to the block (config `sign` not applied), to see which way each prop pushes. **The lift drops to 15 RPM too, so an airborne ship falls.** Learning is paused. Leave with any other mode |
 | `sync` | PFD: SYNC | Targets become the current altitude and heading |
-| `recal` | CAL: RECAL then CONF | Forget the hover calibration. In a steady hover it restarts from the current RPM |
+| `recal` | CAL: RECAL then CONF | Forget the hover calibration: back to the 430 RPM first guess, learned again in flight |
 | `rcs check` | SYS: RCS CHECK then CONF CHECK | In HOVER: find which motor sits at which RCS corner (see RCS check) |
 | `rcs apply` | SYS: RCS APPLY | Use the layout the check found; saved, then the computer restarts |
 | `rcs off` / `rcs on` | SYS: RCS OFF / RCS ON | Hand steering to the Eureka helm: the RCS rests at 0 and the heading loop stops. `rcs on` takes it back and holds the heading the ship is on. The setting survives a reboot (`/ap3_rcs.off`) |
@@ -120,7 +120,7 @@ At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4
 
 ## How it flies
 
-**Hover calibration.** Clockwork blade thrust is `0.5·ρ·v_tip²·C_L·area`, and tip speed is proportional to RPM, so each corner's lift is `k·ρ(y)·RPM²`. Inflow from climbing is negligible next to tip speed. The flight loop measures vertical acceleration over 1-second windows against the force the four lift props are actually making and refines the single constant `k`. Hover RPM per corner at any height is then `sqrt(g / (k·ρ(h)))`, with `ρ` from `aero.getAirDensity`. The first guess is 430 RPM at sea level. On the ground, while asked to climb, RPM steps up until the hull lifts, so a low guess only costs a slower liftoff; a guess far above the real hover would launch the hull. The learned values are saved to `/ap3_cal.dat`.
+**Hover calibration.** Clockwork blade thrust is `0.5·ρ·v_tip²·C_L·area`, and tip speed is proportional to RPM, so each corner's lift is `k·ρ(y)·RPM²`. Inflow from climbing is negligible next to tip speed. The flight loop measures vertical acceleration over 1-second windows against the force the four lift props are actually making and refines the single constant `k`. Hover RPM per corner at any height is then `sqrt(g / (k·ρ(h)))`, with `ρ` from `aero.getAirDensity`. The first guess is 430 RPM at sea level. On the ground, while asked to climb, RPM steps up until the hull lifts, so a low guess only costs a slower liftoff; a guess far above the real hover would launch the hull. It only learns in HOVER and CRUISE: a parked ship with the lift turning (STBY after DEBUG leaves it at 15 RPM) would otherwise learn that 15 RPM hovers. A calibration that puts the sea-level hover under `min_hover_rpm` (100) or over the lift cap is never believed: learning stops at those limits, and such a saved value is replaced by the first guess at start-up. The learned values are saved to `/ap3_cal.dat`.
 
 **Altitude.** The altitude error sets a vertical-speed command. That command is capped at 6 m/s up and 5 m/s down, and further limited near the target so the ship can still stop in time. A vertical-speed loop turns it into an acceleration, and the calibration turns that acceleration into one collective lift RPM. The lift props are pullers and never run below 0. Once settled within 0.5 blocks, the lift is held at the calibrated hover RPM (plus its altitude trim) and only recomputed if the hull drifts past 1 block or starts moving.
 
@@ -156,11 +156,12 @@ Clockwork props don't follow the motor at once: the bearing changes spin by at m
 lua tests/test_flight.lua
 lua tests/test_install.lua
 lua tests/test_bombs.lua
+lua tests/test_mfd.lua
 python tests/cc/run.py <CraftOS-PC_console.exe>
 ```
 
 `tests/test_flight.lua` flies the real control modules against `tests/world.lua`, a hull model with the Clockwork thrust law per motor, air density, drag, RCS yaw, thrust misalignment, nose dip, corner lift torque, an off-centre load, prop lag and ground contact. It checks liftoff, climbing and holding at several heights from wrong calibrations, cruise to 30 m/s within 15 s, the 35 m/s cap, reverse-thrust braking, heading hold, the pitch limit, KILL and DEBUG on all ten motors, noisy telemetry, a wrong bow axis, wrong RCS labels with the RCS check, levelling under an off-centre load, and paired pushers.
 
-`tests/test_install.lua` checks that the installer downloads every module `startup.lua` can load. `tests/test_bombs.lua` checks the bay layout, salvo selection, the interlocks, the trigger pulse and door timing, and the bay wrapper (save before fire, bad save files, a missing door relay, salvo sizes).
+`tests/test_install.lua` checks that the installer downloads every module `startup.lua` can load. `tests/test_bombs.lua` checks the bay layout, salvo selection, the interlocks, the trigger pulse and door timing, and the bay wrapper (save before fire, bad save files, a missing door relay, salvo sizes). `tests/test_mfd.lua` checks that every display keeps three different formats and every page is on screen at most once, whatever is pressed or loaded.
 
 `tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path.

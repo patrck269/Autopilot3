@@ -73,6 +73,7 @@ return {
     -- Keep the first guess low: on the ground the RPM is raised step by step
     -- until the hull lifts, but a guess far above the real hover launches it.
     default_hover_rpm = 430, -- first guess per corner at sea-level density, before any learning
+    min_hover_rpm = 100,  -- a calibration that says a corner hovers below this (at sea level) is not believed
     cal_window = 1.0,     -- seconds per calibration sample
     cal_rate = 0.5,       -- fraction of each sample applied (0..1)
     cal_max_vy = 15,      -- samples taken only while |vy| is below this, m/s

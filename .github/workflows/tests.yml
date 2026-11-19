@@ -6,4 +6,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y lua5.4
-      - run: lua5.4 tests/test_flight.lua && lua5.4 tests/test_install.lua && lua5.4 tests/test_bombs.lua
+      - run: lua5.4 tests/test_flight.lua && lua5.4 tests/test_install.lua && lua5.4 tests/test_bombs.lua && lua5.4 tests/test_mfd.lua

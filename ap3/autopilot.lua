@@ -47,7 +47,6 @@ function M.new(cfg, saved, sea_rho, tel, opts)
     bow_learned = saved ~= nil and saved.bow ~= nil,
     rcs_map = saved and saved.rcs_map or nil, -- RCS layout from an earlier check (applied at start-up)
     rcs_found = nil,                           -- a differing layout found by the last check
-    sea_rho = sea_rho,
     caps = {},
     accel_limited_since = nil,
     events = {},
@@ -160,18 +159,12 @@ function M:command(msg, s)
     self:log("RCS LAYOUT SAVED")
     return true, "rcs layout saved; the flight computer restarts with it"
   elseif c == "recal" then
-    -- Holding steady on a spinning lift: that RPM is the hover. Otherwise start
-    -- again from the default guess and learn in flight.
-    local lift = self.lift_applied or 0
-    if s and lift > 0 and math.abs(s.vy) < 0.3 and not self.alt.grounded then
-      self.alt:reset_calibration(self.sea_rho)
-      self.alt:seed_from_hover(lift, s.rho)
-      self:log("HOVER CAL FROM " .. lift .. " RPM")
-      return true, "hover calibration reset to " .. lift .. " RPM here"
-    end
-    self.alt:reset_calibration(self.sea_rho)
+    -- Forget the hover calibration: back to the default guess, then learn
+    -- again in flight. (Seeding from the lift RPM on screen would keep a bad
+    -- calibration whenever that RPM is not really holding the hull up.)
+    self.alt:reset_calibration()
     self:log("HOVER CAL RESET")
-    return true, "hover calibration reset to default"
+    return true, "hover calibration reset to " .. self.cfg.altitude.default_hover_rpm .. " RPM at sea level"
   end
   return false, "unknown command " .. tostring(c)
 end
@@ -189,8 +182,6 @@ end
 function M:step(s, now, dt, bank)
   local out = {}
   local cfg = self.cfg
-  local lift_applied = bank:effective("lift")
-  self.lift_applied = lift_applied
   bank.exact = self.mode == "DEBUG"
   local thr_applied = bank:effective("thrust")
   local thr_cap = self.caps.thrust_port
@@ -215,7 +206,10 @@ function M:step(s, now, dt, bank)
   for _, id in ipairs(RCS) do rcs_prop[id] = bank:prop(id, now) end
   local u_now, sw_now = heading.applied(rcs_prop, self.caps)
   local thr_f = util.ssq(thr_prop) / (thr_cap * thr_cap)
-  if lift_prop ~= 0 or flying then
+  -- The hover is learned only while the autopilot flies the hull. Parked
+  -- with the lift turning (STBY after DEBUG leaves 15 RPM on it), a hull
+  -- resting on its moorings would teach that 15 RPM hovers.
+  if flying then
     self.alt:observe(s, lift_prop, now, want_up)
   end
   self.spd:observe(s, thr_f, now)

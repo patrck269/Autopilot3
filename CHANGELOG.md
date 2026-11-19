@@ -11,6 +11,8 @@ Rebuilt on the Autopilot 2.0 codebase. This replaces the 1.0-derived modes and U
 - Four-corner levelling trims the lift corners to hold pitch and roll. It learns an off-centre load and waits for a confirmed bow axis.
 - The bomb bay logic is unchanged. The bay record and salvo size live in `/ap3_bombs.dat`.
 - Removed: MAN, SEMI and AUTO modes, waypoint autonav, the arrow-key stick, the single-letter hotkeys and the `rcs` shell program.
+- The hover calibration is learned only in HOVER and CRUISE and bounded to a sea-level hover between 100 RPM and the lift cap; `recal` always resets to the first guess. (Autopilot 2.0 learned a 15 RPM hover from a parked ship.)
+- MFD format slots stay distinct: picking a page an MFD already held in another slot made a duplicate, and pages dropped out of every slot.
 - Motor caps doubled to 5500 RPM lift, 4000 RCS and 3000 pushers. Write steps retuned to 600 RPM for lift and pushers (about what the props can follow in a second) and 2000 for RCS. The pusher loop asks for at most 1.5 m/s² beyond its ramp, and it is held to 25% force until the bow axis is confirmed. The first guesses for thrust and RCS strength are scaled for the higher caps.
 
 ## 3.0.0
