@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.1.0
+
+Rebuilt on the Autopilot 2.0 codebase. This replaces the 1.0-derived modes and UI.
+
+- Flight control is Autopilot 2.0's: learned altitude, speed and heading control, the HOVER, CRUISE, STBY, KILL and DEBUG modes, the RCS check and the learned bow axis.
+- The MFDs are Autopilot 2.0's fighter MFDs, with OSBs, MENU, three formats per display, SWAP and a saved layout. A new BOMB page shows the bay map and has salvo, door, drop and reload buttons.
+- Commands are typed on the terminal with Autopilot 2.0's command line. New commands are `doors open|close`, `salvo`, `drop`, `reload` and `rcs off|on`.
+- The ten electric motors are driven as three batched groups: four lift corners, four RCS corners and two paired pushers.
+- Four-corner levelling trims the lift corners to hold pitch and roll. It learns an off-centre load and waits for a confirmed bow axis.
+- The bomb bay logic is unchanged. The bay record and salvo size live in `/ap3_bombs.dat`.
+- Removed: MAN, SEMI and AUTO modes, waypoint autonav, the arrow-key stick, the single-letter hotkeys and the `rcs` shell program.
+
 ## 3.0.0
 
 - Replaced grouped propulsion with ten independently controlled electric motors.

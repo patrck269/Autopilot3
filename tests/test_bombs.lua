@@ -1,8 +1,11 @@
-package.path = "src/?.lua;" .. package.path
+-- Bomb selection, interlocks and the bay wrapper. Run from the repo root:
+--   lua tests/test_bombs.lua
+package.path = "./?.lua;" .. package.path
 local A = dofile("tests/assert.lua")
-local config = require("config")
-local bombs = require("bombs")
-local cfg = config.default()
+local bombs = require("ap3.bombs")
+local bombbay = require("ap3.bombbay")
+local CFG = dofile("ap3/config.lua")
+local cfg = CFG.bombs
 
 local expected_layout = {
   [14]={0,1}, [34]={0,21}, [13]={0,22}, [35]={0,23},
@@ -87,3 +90,83 @@ bombs.update(b, 0.5, relays, relays[59], cfg)
 bombs.drop(b, 6, 250, relays, cfg)
 bombs.update(b, 6.5, relays, relays[59], cfg)
 A.eq(b.close_at, 16.5, "second drop moves close")
+
+-- ap3.bombbay with a fake peripheral API and store. calls logs every relay
+-- output and every save, in order.
+local function bay_world(opts)
+  opts = opts or {}
+  local calls, files = {}, { [CFG.bomb_file] = opts.file }
+  local relays = {}
+  for id = 13, 59 do
+    if not (opts.missing and opts.missing[id]) then
+      relays[cfg.relay_prefix .. id] = {
+        setOutput = function(side, value) calls[#calls + 1] = { kind = "out", id = id, side = side, value = value } end,
+      }
+    end
+  end
+  local P = {
+    isPresent = function(name) return relays[name] ~= nil end,
+    hasType = function(name, t) return relays[name] ~= nil and t == "redstone_relay" end,
+    getType = function(name) return relays[name] and "redstone_relay" or nil end,
+    wrap = function(name) return relays[name] end,
+  }
+  local store = {
+    load = function(path) return files[path] end,
+    save = function(path, value)
+      calls[#calls + 1] = { kind = "save", value = value }
+      files[path] = value
+      return true
+    end,
+  }
+  local bay = bombbay.new(CFG, P, store)
+  bay:scan()
+  return bay, calls, files
+end
+
+do
+  local bay, calls, files = bay_world()
+  A.eq(bay:command("doors", "open", { y = 250 }, 0), true, "bay doors open")
+  local before = #calls
+  local ok, text = bay:command("drop", nil, { y = 250 }, 3)
+  A.eq(ok, true, "bay drop")
+  A.eq(text, "dropped 25", "bay drop text")
+  local saved_at, fired_at
+  for i = before + 1, #calls do
+    local c = calls[i]
+    if c.kind == "save" and not saved_at then saved_at = i end
+    if c.kind == "out" and c.value == true and c.id ~= 59 and not fired_at then fired_at = i end
+  end
+  A.eq(saved_at ~= nil and fired_at ~= nil and saved_at < fired_at, true, "salvo saved before any trigger fires")
+  A.eq(files[CFG.bomb_file].used[1], 25, "saved used list")
+  local st = bay:status(3, 250)
+  A.eq(st.left, 45, "one bomb gone")
+  A.eq(st.used[25], true, "used map")
+end
+
+do
+  local bay = bay_world({ file = { used = { 99 }, size = 3 } })
+  A.eq(bay:status(0, 250).left, 46, "file with id 99 ignored")
+  A.eq(bay:status(0, 250).size, 1, "its salvo size ignored too")
+  local good = bay_world({ file = { used = { 14, 58 }, size = 5 } })
+  A.eq(good:status(0, 250).left, 44, "valid file loaded")
+  A.eq(good:status(0, 250).size, 5, "valid salvo size loaded")
+end
+
+do
+  local bay = bay_world({ missing = { [59] = true } })
+  local ok, text = bay:command("doors", "open", { y = 250 }, 0)
+  A.eq(ok, false, "doors refused without relay 59")
+  A.eq(text, "doors relay missing", "doors refusal text")
+  A.eq(bay:status(0, 250).reason, "doors relay missing", "drop reason without relay 59")
+end
+
+do
+  local bay = bay_world()
+  local ok, text = bay:command("salvo", 4, nil, 0)
+  A.eq(ok, false, "salvo 4 rejected")
+  A.eq(text, "salvo must be 1, 3, 5, 10 or all", "salvo rejection text")
+  A.eq(bay:command("salvo", "all", nil, 0), true, "salvo all accepted")
+  A.eq(bay:status(0, 250).size, "all", "salvo all set")
+end
+
+print("ALL BOMB CHECKS PASSED")

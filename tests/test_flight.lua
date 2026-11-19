@@ -1,67 +1,491 @@
-package.path = "src/?.lua;" .. package.path
-local A = dofile("tests/assert.lua")
-local config = require("config")
-local flight = require("flight")
-local cfg = config.default()
+-- Closed-loop flight checks against tests/plant.lua. Run from the repo root:
+--   lua tests/test_flight.lua
+package.path = "./?.lua;" .. package.path
+local plant = require("tests.plant")
+local util = require("ap3.util")
 
-local function sample(values)
-  local s = {
-    x=0, y=100, z=0, vx=0, vy=0, vz=0,
-    forward_speed=0, side_speed=0, heading=0,
-    pitch=0, roll=0, pitch_rate=0, roll_rate=0, yaw_rate=0, dt=0.05,
-  }
-  for key, value in pairs(values or {}) do s[key] = value end
-  return s
+-- Station keeping holds inside deliberate bands (fewer controller writes):
+-- altitude within hold_release, heading within the mode's deadzone, plus about
+-- half a unit for actuator lag. Clockwork props take ~3.1 s to spin from 0 to
+-- 2000 RPM (world.lua models that), which costs a little more at speed.
+local CFG = dofile("ap3/config.lua")
+local ALT_TOL = CFG.altitude.hold_release + 0.5
+local HDG_HOVER = CFG.heading.hover_deadzone + 0.5
+local HDG_CRUISE = 4
+
+local failures = 0
+local function check(cond, label, detail)
+  if cond then
+    print("  ok    " .. label)
+  else
+    failures = failures + 1
+    print("  FAIL  " .. label .. (detail and ("  (" .. detail .. ")") or ""))
+  end
 end
 
-local st = flight.new_state(cfg)
-st.mode = "semi"
-st.alt_target = 150
-st.bearing_target = 0
-local y, vy = 100, 0
-for _ = 1, 120 / 0.05 do
-  local s = sample({ y=y, vy=vy })
-  local out = flight.step(st, s, cfg)
-  local mean = (out.elev_pb + out.elev_ps + out.elev_sb + out.elev_ss) / 4
-  local accel = 10 * ((mean / 600) ^ 1.2 - 1)
-  vy = vy + accel * s.dt
-  y = y + vy * s.dt
+local function hover_rpm_true(sim, y)
+  return sim.p.hover_rpm_sea * math.sqrt(plant.rho(62) / plant.rho(y))
 end
-A.near(y, 150, 0.5, "vertical target")
-A.near(st.hover_rpm, 600, 12, "learned hover")
 
-st = flight.new_state(cfg)
-st.mode = "semi"
-st.alt_target = 100
-st.bearing_target = 0
-local out = flight.step(st, sample({ pitch=math.rad(5) }), cfg)
-A.eq(out.elev_pb < out.elev_ps, true, "nose-up port correction")
-A.eq(out.elev_sb < out.elev_ss, true, "nose-up starboard correction")
+-- Track altitude behaviour from a moment on.
+local function watch()
+  local m = { max_y = -1e9, min_y = 1e9, max_vy = 0, reached = nil }
+  m.hook = function(sim, s)
+    if s.y > m.max_y then m.max_y = s.y end
+    if s.y < m.min_y then m.min_y = s.y end
+    if math.abs(s.vy) > m.max_vy then m.max_vy = math.abs(s.vy) end
+  end
+  return m
+end
 
-st = flight.new_state(cfg)
-st.mode = "semi"
-st.alt_target = 100
-st.bearing_target = 0
-out = flight.step(st, sample({ roll=math.rad(5) }), cfg)
-A.eq(out.elev_sb > out.elev_pb, true, "starboard bow roll correction")
-A.eq(out.elev_ss > out.elev_ps, true, "starboard stern roll correction")
+print("1. Ground start, no calibration, climb to 150 and hold")
+do
+  -- Real hover is 900 RPM at sea level; the untrained guess is 430.
+  local sim = plant.new({ hover_rpm_sea = 900 })
+  sim.cmd("alt", 150)
+  sim.cmd("mode", "HOVER")
+  local reached
+  sim.run(120, function(s2, s)
+    if not reached and math.abs(s.y - 150) < 1 then reached = s2.w.t end
+  end)
+  check(reached ~= nil and reached < 80, "reaches 150 +-1", "t=" .. tostring(reached))
+  local m = watch()
+  sim.run(60, m.hook)
+  check(m.max_y - 150 < ALT_TOL and 150 - m.min_y < ALT_TOL, "holds 150 within " .. ALT_TOL .. " for 60 s",
+    string.format("min %.2f max %.2f", m.min_y, m.max_y))
+  local hov = hover_rpm_true(sim, 150)
+  local learned = sim.ap.alt:hover_rpm(plant.rho(150))
+  check(math.abs(learned - hov) / hov < 0.03, "learned hover RPM within 3%",
+    string.format("learned %.1f true %.1f", learned, hov))
+  print(string.format("     liftoff->150 in %.1f s, lift %.0f RPM, writes %d", reached or -1, sim.lift_cmd(), sim.w.writes))
 
-st = flight.new_state(cfg)
-st.mode = "semi"
-st.alt_target = 100
-st.bearing_target = math.rad(10)
-out = flight.step(st, sample(), cfg)
-A.eq(out.rcs_sb > 0, true, "right turn bow starboard")
-A.eq(out.rcs_ps > 0, true, "right turn stern port")
-A.eq(out.rcs_pb, 0, "right turn bow port off")
-A.eq(out.rcs_ss, 0, "right turn stern starboard off")
+  print("2. Same flight: climb to 400 (thinner air) then descend to 90")
+  sim.cmd("alt", 400)
+  local m2 = watch()
+  local t0 = sim.w.t
+  local r400
+  sim.run(150, function(s2, s)
+    m2.hook(s2, s)
+    if not r400 and math.abs(s.y - 400) < 1 then r400 = s2.w.t - t0 end
+  end)
+  check(r400 ~= nil, "reaches 400", "t=" .. tostring(r400))
+  check(m2.max_y < 403, "overshoot under 3 blocks", string.format("max %.2f", m2.max_y))
+  check(math.abs(sim.w.y - 400) < 0.8, "holds 400", string.format("y %.2f", sim.w.y))
+  local hov4 = hover_rpm_true(sim, 400)
+  check(math.abs(sim.lift_cmd() - hov4) / hov4 < 0.04, "lift RPM at 400 near true hover",
+    string.format("cmd %.0f true %.1f", sim.lift_cmd(), hov4))
+  print(string.format("     150->400 in %.1f s, max climb %.2f m/s", r400 or -1, m2.max_vy))
 
-st.emergency = true
-out = flight.step(st, sample(), cfg)
-for role, rpm in pairs(out) do A.eq(rpm, 0, role .. " emergency") end
-st.emergency = false
-st.mode = "standby"
-A.eq(flight.step(st, sample(), cfg), nil, "standby output")
+  sim.cmd("alt", 90)
+  local m3 = watch()
+  sim.run(150, m3.hook)
+  check(m3.min_y > 87, "descent undershoot under 3 blocks", string.format("min %.2f", m3.min_y))
+  check(math.abs(sim.w.y - 90) < 0.8, "holds 90", string.format("y %.2f", sim.w.y))
+end
 
-st = flight.new_state(cfg)
-A.eq(flight.enter(st, "auto", sample(), cfg), "set waypoint X and Z first", "auto waypoint guard")
+print("3. Heavy hull (hover 2200 RPM) from the ground")
+do
+  local sim = plant.new({ hover_rpm_sea = 2200 })
+  sim.cmd("alt", 120)
+  sim.cmd("mode", "HOVER")
+  sim.run(150)
+  check(math.abs(sim.w.y - 120) < 1, "reaches and holds 120", string.format("y %.2f", sim.w.y))
+end
+
+print("4. Light hull (hover 300 RPM), calibration guess too high")
+do
+  local sim = plant.new({ hover_rpm_sea = 300 })
+  sim.cmd("alt", 100)
+  sim.cmd("mode", "HOVER")
+  local m = watch()
+  sim.run(120, m.hook)
+  check(math.abs(sim.w.y - 100) < 1, "reaches and holds 100", string.format("y %.2f", sim.w.y))
+  check(m.max_y < 106, "overshoot under 6 blocks on the first climb", string.format("max %.2f", m.max_y))
+end
+
+print("5. Cruise: 0 -> 30 m/s within 15 s, hold bearing and altitude")
+do
+  -- Off-centre thrust line: at full pusher thrust it needs about a quarter of
+  -- what one RCS pair can give at 2000 RPM.
+  local sim = plant.new({ hover_rpm_sea = 900, y = 200, lift = 900, misalign = 0.08, psi = 10,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900) } })
+  sim.cmd("alt", 200)
+  sim.cmd("brg", 90)
+  sim.cmd("mode", "HOVER")
+  sim.run(40)
+  check(math.abs(util.wrap180(sim.s.hdg - 90)) < HDG_HOVER, "hover turns to bearing 90", string.format("hdg %.2f", sim.s.hdg))
+  sim.cmd("spd", 30)
+  sim.cmd("mode", "CRUISE")
+  local t0 = sim.w.t
+  local reach
+  local max_hdg_err, max_alt_err, max_v = 0, 0, 0
+  sim.run(40, function(s2, s)
+    if not reach and math.abs(s.v_fwd - 30) < 1 then reach = s2.w.t - t0 end
+    if s2.w.t - t0 > 3 then
+      max_hdg_err = math.max(max_hdg_err, math.abs(util.wrap180(s.hdg - 90)))
+    end
+    max_alt_err = math.max(max_alt_err, math.abs(s.y - 200))
+    max_v = math.max(max_v, s.v_fwd)
+  end)
+  check(reach ~= nil and reach <= 15, "30 m/s (+-1) within 15 s", "t=" .. tostring(reach))
+  check(max_v < 31.5, "speed overshoot under 1.5 m/s", string.format("max %.2f", max_v))
+  check(max_hdg_err < HDG_CRUISE, "heading within " .. HDG_CRUISE .. " deg at speed with thrust misalignment",
+    string.format("%.2f", max_hdg_err))
+  check(max_alt_err < 2, "altitude within 2 blocks", string.format("%.2f", max_alt_err))
+
+  print("6. Cap at 35 m/s")
+  local ok = sim.ap:command({ c = "spd", v = 50 }, sim.s)
+  check(ok and sim.ap.tgt.spd == 35, "target 50 clamps to 35", tostring(sim.ap.tgt.spd))
+  local max_v2 = 0
+  sim.run(40, function(_, s) max_v2 = math.max(max_v2, s.v_fwd) end)
+  check(max_v2 <= 35.5, "speed never above 35.5", string.format("%.2f", max_v2))
+  check(math.abs(sim.s.v_fwd - 35) < 1, "settles at 35", string.format("%.2f", sim.s.v_fwd))
+
+  print("7. Slow to 0 with reverse thrust")
+  sim.cmd("spd", 0)
+  local reverse, t0b, stopped = false, sim.w.t, nil
+  sim.run(40, function(s2, s)
+    if s2.w.cmd.thrust_port < 0 then reverse = true end
+    if not stopped and math.abs(s.v_fwd) < 0.5 then stopped = s2.w.t - t0b end
+  end)
+  check(reverse, "pushers ran in reverse")
+  check(stopped ~= nil and stopped <= 15, "stopped (<0.5 m/s) within 15 s", "t=" .. tostring(stopped))
+end
+
+print("8. Nose dips under acceleration: thrust held back")
+do
+  -- Unprotected, full thrust here would pitch the nose about 8 deg down; cruise
+  -- drag alone about 3 deg.
+  local sim = plant.new({ hover_rpm_sea = 900, y = 200, lift = 900, dip = 1.0,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900) } })
+  sim.cmd("alt", 200)
+  sim.cmd("spd", 30)
+  sim.cmd("mode", "CRUISE")
+  local min_pitch, held, reach = 0, false, nil
+  sim.run(60, function(s2, s)
+    min_pitch = math.min(min_pitch, s.pitch)
+    if s2.ap.spd.pitch_hold then held = true end
+    if not reach and math.abs(s.v_fwd - 30) < 1 then reach = s2.w.t end
+  end)
+  check(held, "pitch protection engaged")
+  local limit = sim.cfg.speed.pitch_limit
+  check(min_pitch > -(limit + 2), "nose dip kept within limit + 2 deg", string.format("%.2f", min_pitch))
+  check(reach ~= nil, "still reaches 30 m/s", "t=" .. tostring(reach))
+  print(string.format("     reached 30 m/s at %.1f s with the nose limited", reach or -1))
+end
+
+print("9. KILL zeroes every motor at once")
+do
+  local sim = plant.new({ hover_rpm_sea = 900, y = 200, lift = 900,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900) } })
+  sim.cmd("spd", 20)
+  sim.cmd("mode", "CRUISE")
+  sim.run(10)
+  sim.cmd("mode", "KILL")
+  sim.run(0.4)
+  local zero = 0
+  for _, v in pairs(sim.w.cmd) do if v == 0 then zero = zero + 1 end end
+  check(zero == 10, "all ten motors at 0 within 0.4 s", zero .. " at 0")
+end
+
+print("10. Noisy velocity readings (+-0.15 m/s): calibrate and hold")
+do
+  math.randomseed(7)
+  local sim = plant.new({ hover_rpm_sea = 1200, noise = 0.15 })
+  sim.cmd("alt", 140)
+  sim.cmd("mode", "HOVER")
+  sim.run(100)
+  local m = watch()
+  sim.run(60, m.hook)
+  check(m.max_y - 140 < ALT_TOL and 140 - m.min_y < ALT_TOL, "holds 140 within " .. ALT_TOL,
+    string.format("min %.2f max %.2f", m.min_y, m.max_y))
+end
+
+-- Hover with the bearing 40 deg off. Returns max |yaw rate|, final heading
+-- error, and the largest heading error over the last 20 s.
+local function turn_in_hover(opts)
+  opts.y = 200
+  opts.lift = 900
+  opts.psi = 0
+  opts.saved = { k = 10 / (plant.rho(62) * 900 * 900) }
+  local sim = plant.new(opts)
+  sim.cmd("alt", 200)
+  sim.cmd("brg", 40)
+  sim.cmd("mode", "HOVER")
+  local max_rate, late_err = 0, 0
+  sim.run(opts.seconds or 90, function(s2, s)
+    max_rate = math.max(max_rate, math.abs(s.yaw_rate))
+    if s2.w.t > (opts.seconds or 90) - 20 then
+      late_err = math.max(late_err, math.abs(util.wrap180(s.hdg - 40)))
+    end
+  end)
+  return sim, max_rate, math.abs(util.wrap180(sim.s.hdg - 40)), late_err
+end
+
+-- Longest run of ticks with an RCS corner pulling without its diagonal
+-- partner (with the helm's stabilisation that strafes the hull instead of
+-- turning it). Pair writes go back to back, so at most one tick.
+local function lonely_run(sim)
+  return sim.w.lonely_max
+end
+
+print("11. Turn 40 deg in hover: settles, pairs run together")
+do
+  local sim, max_rate, err, late = turn_in_hover({})
+  check(max_rate < 10, "yaw rate stays under 10 deg/s", string.format("max %.1f", max_rate))
+  check(late < 1, "bearing stays within 1 deg after the turn (no +-2 deg bounce)",
+    string.format("err %.2f, late max %.2f", err, late))
+  check(lonely_run(sim) <= 1, "diagonal pairs run together", lonely_run(sim) .. " ticks alone at most")
+end
+
+print("12. Very strong RCS: no limit cycle")
+do
+  local sim, max_rate, err, late = turn_in_hover({ yaw_accel = 60 })
+  check(max_rate < 10, "yaw rate stays under 10 deg/s", string.format("max %.1f", max_rate))
+  check(late < HDG_HOVER, "settles on the bearing", string.format("err %.2f, late max %.2f", err, late))
+  check(lonely_run(sim) <= 1, "diagonal pairs run together", lonely_run(sim) .. " ticks alone at most")
+end
+
+print("13. Weak RCS: still turns")
+do
+  local sim, max_rate, err, late = turn_in_hover({ yaw_accel = 1.0, seconds = 150 })
+  check(late < HDG_HOVER, "settles on the bearing", string.format("err %.2f, late max %.2f", err, late))
+  check(lonely_run(sim) <= 1, "diagonal pairs run together", lonely_run(sim) .. " ticks alone at most")
+end
+
+local RCS_CAP = CFG.motors.bow_port.cap
+print("14. RCS writes never exceed the " .. RCS_CAP .. " RPM cap, even saturated")
+do
+  local migrated = plant.new({ saved = { yaw_b = 0.5, rcs_cap = 1000 } })
+  local want = 0.5 * (RCS_CAP / 1000) ^ 2
+  check(math.abs(migrated.ap.hdg:authority() - want) < 1e-9,
+    "saved yaw authority scales with the RPM cap", string.format("%.2f", migrated.ap.hdg:authority()))
+  local sim = plant.new({ y = 200, lift = 900, psi = 0, yaw_accel = 0.3,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 0.2, rcs_cap = RCS_CAP } })
+  sim.cmd("alt", 200)
+  sim.cmd("brg", 170)
+  sim.cmd("mode", "HOVER")
+  local top = 0
+  sim.run(20, function(s2)
+    for _, id in ipairs({ "bow_port", "bow_stbd", "stern_port", "stern_stbd" }) do
+      top = math.max(top, math.abs(s2.w.cmd[id]))
+    end
+  end)
+  check(top == RCS_CAP, "RCS reaches but does not pass " .. RCS_CAP .. " RPM", "max " .. top)
+end
+
+print("15. DEBUG: every motor at +15 RPM on the block, calibration untouched")
+do
+  local sim = plant.new({ y = 200, lift = 900,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900) },
+    cfg = function(cfg) cfg.motors.bow_port.sign = -1 end })
+  sim.cmd("alt", 200)
+  sim.cmd("mode", "HOVER")
+  sim.run(5)
+  local k = sim.ap.alt.k
+  sim.cmd("mode", "DEBUG")
+  sim.run(6) -- the lift steps down to 15 RPM through the slew limit
+  local n = 0
+  for id, v in pairs(sim.w.cmd) do
+    if v == 15 then n = n + 1 else print("     " .. id .. " = " .. v) end
+  end
+  check(n == 10, "all ten motors at +15 (bow_port has sign -1 in config)")
+  sim.run(5) -- the hull drops on 15 RPM lift
+  check(sim.ap.alt.k == k, "hover calibration unchanged by the drop")
+  sim.cmd("mode", "HOVER")
+  sim.run(40)
+  check(math.abs(sim.w.y - 200) < 1.5, "HOVER afterwards climbs back to 200", string.format("y %.2f", sim.w.y))
+end
+
+print("19. Already drifting sideways when HOVER engages: drift cancelled")
+do
+  local case = { "starting drift" }
+  -- 3 m/s to starboard, hardly any side drag (a VS hull keeps sliding).
+  local opts = { y = 150, lift = 958, psi = 30, v_side = 3, side_drag = 0.02,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900) } }
+  local sim = plant.new(opts)
+  sim.cmd("alt", 150)
+  sim.cmd("brg", 30)
+  sim.cmd("mode", "HOVER")
+  local stopped, worst_hdg = nil, 0
+  sim.run(90, function(s2, s)
+    if not stopped and math.abs(s.v_side) < 0.3 then stopped = s2.w.t end
+    worst_hdg = math.max(worst_hdg, math.abs(util.wrap180(s.hdg - 30)))
+  end)
+  check(stopped ~= nil, case[1] .. ": drift brought under 0.3 m/s", "t=" .. tostring(stopped))
+  check(math.abs(sim.s.v_side) < 0.5, case[1] .. ": and kept there", string.format("%.2f m/s", sim.s.v_side))
+  check(worst_hdg < 6, case[1] .. ": heading held while braking", string.format("worst %.2f deg", worst_hdg))
+  print(string.format("     drift stopped after %.1f s, sideways strength %.3f m/s2", stopped or -1,
+    sim.ap.motion:sway_authority()))
+end
+
+print("20. frame.forward set wrong: bow axis learned, drift cancelled, cruise works")
+for _, case in ipairs({ { "90 deg off", { x = 0, y = 0, z = -1 } }, { "180 deg off", { x = -1, y = 0, z = 0 } } }) do
+  -- The hull's real bow is +X; the config says otherwise. Drifting 3 m/s at start.
+  local sim = plant.new({ y = 150, lift = 958, psi = 30, v_side = 3, side_drag = 0.02,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900) },
+    cfg = function(cfg) cfg.frame.forward = case[2] end })
+  sim.cmd("alt", 150)
+  sim.cmd("mode", "HOVER")
+  local switches, last = 0, 0
+  local function true_side()
+    local a = math.rad(sim.w.psi)
+    return sim.w.vx * math.cos(a) + sim.w.vz * math.sin(a)
+  end
+  local worst = 0
+  sim.run(90, function(s2)
+    local stb = s2.w.cmd.bow_stbd > 0 and s2.w.cmd.stern_stbd > 0
+    local prt = s2.w.cmd.bow_port > 0 and s2.w.cmd.stern_port > 0
+    local side = stb and 1 or (prt and -1 or 0)
+    if side ~= 0 and side ~= last then switches = switches + 1; last = side end
+    worst = math.max(worst, math.abs(true_side()))
+  end)
+  -- 90 deg off: the drift shows up as fore/aft, the pushers brake it
+  -- and reveal the bow. 180 deg off: a sideways drift can't reveal it, the
+  -- brake pushes the wrong way and its guard stops it.
+  check(worst < 4, case[1] .. ": the drift is never made much worse", string.format("worst %.2f m/s (started 3)", worst))
+  check(switches <= 4, case[1] .. ": brake does not flap port/starboard", switches .. " side changes")
+  -- The bow is learned from the pushers' push, so it may need a cruise.
+  local brg = util.round(sim.s.hdg) % 360
+  sim.cmd("brg", brg)
+  sim.cmd("spd", 15)
+  sim.cmd("mode", "CRUISE")
+  local top = 0
+  sim.run(40, function(s2) top = math.max(top, math.sqrt(s2.w.vx ^ 2 + s2.w.vz ^ 2)) end)
+  check(util.dot(sim.tel.forward, { x = 1, y = 0, z = 0 }) > 0.99, case[1] .. ": bow axis learned as +X",
+    util.axis_name(sim.tel.forward))
+  check(math.abs(util.wrap180(sim.s.hdg - sim.w.psi)) < 1, case[1] .. ": heading reads true",
+    string.format("reads %.1f, true %.1f", sim.s.hdg, sim.w.psi))
+  local a = math.rad(sim.w.psi)
+  local true_fwd = sim.w.vx * math.sin(a) - sim.w.vz * math.cos(a)
+  check(math.abs(true_fwd - 15) < 1.5, case[1] .. ": cruises at 15 m/s along the real bow", string.format("%.2f m/s", true_fwd))
+  check(top < 18, case[1] .. ": no runaway before the axis is learned", string.format("top %.1f m/s", top))
+  -- Back to a hover with the right axis: any drift is braked out.
+  sim.cmd("mode", "HOVER")
+  sim.run(90)
+  check(math.abs(true_side()) < 0.5, case[1] .. ": sideways drift cancelled once the axis is known",
+    string.format("%.2f m/s", true_side()))
+end
+
+print("21. Corner labels wrong (stern pair swapped): RCS check finds it, apply fixes the hover")
+do
+  local swapped = { stern_port = "stern_stbd", stern_stbd = "stern_port" }
+  local base = { y = 150, lift = 958, psi = 30, saved = { k = 10 / (plant.rho(62) * 900 * 900) } }
+  local function hull(at, saved)
+    local o = {}
+    for k, v in pairs(base) do o[k] = v end
+    o.at, o.saved = at, saved or base.saved
+    return plant.new(o)
+  end
+  local function hover_with_kick(sim)
+    sim.cmd("alt", 150)
+    sim.cmd("brg", 30)
+    sim.cmd("mode", "HOVER")
+    sim.w.r = -1.5 -- a small yaw kick as it lifts
+    local late = 0
+    sim.run(90, function(s2, s)
+      if s2.w.t > 70 then late = math.max(late, math.abs(util.wrap180(s2.w.psi - 30))) end
+    end)
+    return late
+  end
+  local function events(sim) return table.concat(sim.ap.events, " | ") end
+
+  local bad = hull(swapped)
+  local late = hover_with_kick(bad)
+  check(late > HDG_HOVER, "with the labels wrong the heading is not held (the in-game symptom)",
+    string.format("off %.1f deg, learned turn %.3f", late, bad.ap.hdg:authority()))
+
+  local sim = hull(swapped)
+  sim.cmd("alt", 150)
+  sim.cmd("mode", "HOVER")
+  sim.run(5)
+  sim.cmd("rcs_check")
+  sim.run(60)
+  check(sim.ap.check == nil, "check finishes", events(sim))
+  local found = sim.ap.rcs_found
+  check(found ~= nil and found.stern_stbd == "electric_motor_4"
+    and found.stern_port == "electric_motor_0"
+    and found.bow_port == "electric_motor_6" and found.bow_stbd == "electric_motor_1",
+    "finds R4 at stern starboard and R0 at stern port", events(sim))
+  check(math.abs(sim.w.y - 150) < 2, "altitude held during the check", string.format("y %.2f", sim.w.y))
+  sim.cmd("rcs_apply")
+  local saved = sim.ap:saved()
+  check(saved.rcs_map ~= nil, "layout is saved with the calibration")
+
+  local fixed = hull(swapped, saved)
+  check(fixed.cfg.motors.stern_stbd.label == "R4 STRN STBD", "restart uses the saved layout",
+    fixed.cfg.motors.stern_stbd.label)
+  late = hover_with_kick(fixed)
+  check(late < HDG_HOVER, "after apply the heading is held", string.format("off %.1f deg, learned turn %.3f", late, fixed.ap.hdg:authority()))
+
+  local good = hull(nil)
+  good.cmd("alt", 150)
+  good.cmd("mode", "HOVER")
+  good.run(5)
+  good.cmd("rcs_check")
+  good.run(60)
+  check(good.ap.rcs_found == nil and events(good):find("MATCHES CONFIG", 1, true) ~= nil,
+    "a correctly labelled hull reports a match", events(good))
+end
+
+print("23. Saved turning strength from noise: a hover turn still uses the full RCS")
+do
+  -- The calibration the in-game flight computer saved: 1378 deg/s^2 held
+  -- every turn command near 110 RPM, too weak to turn the hull or relearn.
+  local sim = plant.new({ y = 150, lift = 958, psi = 0,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 1378.0205797682015, rcs_cap = 2000,
+      bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", 150)
+  sim.cmd("brg", 0)
+  sim.cmd("mode", "HOVER")
+  sim.run(20)
+  sim.cmd("brg", 40)
+  local top = 0
+  sim.run(60, function(s2)
+    for _, id in ipairs({ "bow_port", "bow_stbd", "stern_port", "stern_stbd" }) do
+      top = math.max(top, s2.w.cmd[id] or 0)
+    end
+  end)
+  local err = math.abs(util.wrap180(sim.w.psi - 40))
+  check(top > 1000, "the 40 deg turn drives the RCS past 1000 RPM", "max " .. top .. " RPM")
+  check(err < HDG_HOVER, "the turn completes within 60 s", string.format("off %.1f deg", err))
+end
+
+print("24. Off-centre load: the lift corners level the hull")
+do
+  -- Nose-up and port-down load: unlevelled, the hull's own stability alone
+  -- would sit at about 3.75 deg pitch and -3.75 deg roll. The bow axis is
+  -- confirmed (saved), so the levelling runs from the start.
+  local sim = plant.new({ y = 150, lift = 900, psi = 0, pitch_load = 1.5, roll_load = -1.5,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", 150)
+  sim.cmd("brg", 0)
+  sim.cmd("mode", "HOVER")
+  local m = watch()
+  sim.run(60, m.hook)
+  check(math.abs(sim.s.pitch) < 1 and math.abs(sim.s.roll) < 1, "pitch and roll within 1 deg after 60 s",
+    string.format("pitch %.2f roll %.2f, trim P %.3f R %.3f", sim.s.pitch, sim.s.roll,
+      sim.ap.level.trim_pitch, sim.ap.level.trim_roll))
+  check(m.max_y - 150 < ALT_TOL and 150 - m.min_y < ALT_TOL, "altitude held within " .. ALT_TOL,
+    string.format("min %.2f max %.2f", m.min_y, m.max_y))
+end
+
+print("25. Pushers stay paired")
+do
+  local sim = plant.new({ y = 200, lift = 900, psi = 0,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900) } })
+  sim.cmd("alt", 200)
+  sim.cmd("brg", 0)
+  sim.cmd("mode", "HOVER")
+  sim.run(5)
+  sim.cmd("spd", 20)
+  sim.cmd("mode", "CRUISE")
+  sim.w.pusher_split_max = 0
+  sim.run(40)
+  check(math.abs(sim.s.v_fwd - 20) < 1, "cruises at 20 m/s", string.format("%.2f m/s", sim.s.v_fwd))
+  check(sim.w.pusher_split_max <= 1, "the two pushers never differ for more than one tick",
+    sim.w.pusher_split_max .. " ticks")
+end
+
+print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
+os.exit(failures == 0 and 0 or 1)

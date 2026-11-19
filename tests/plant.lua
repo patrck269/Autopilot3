@@ -1,0 +1,72 @@
+-- Desktop closed loop: the real telemetry, autopilot and actuator modules
+-- flying tests/world.lua at 20 ticks per second, with one motor write
+-- per tick (setSpeed runs on the server thread in game).
+package.path = "./?.lua;" .. package.path
+
+local world = dofile("tests/world.lua")
+local telemetry = require("ap3.telemetry")
+local autopilot = require("ap3.autopilot")
+local actuators = require("ap3.actuators")
+
+local P = {}
+P.rho = world.rho
+
+-- opts: world overrides (see world.DEFAULTS, plus y, psi, lift, rpm), saved
+-- calibration, cfg(cfg) to edit the config.
+function P.new(opts)
+  opts = opts or {}
+  local cfg = dofile("ap3/config.lua")
+  if opts.cfg then opts.cfg(cfg) end
+  local w = world.new(cfg.motors, opts, cfg.gravity)
+  w.t, w.tick = 0, 0
+
+  -- Wrap motors by peripheral name, after any saved RCS layout, like
+  -- the flight program does.
+  local byname = {}
+  for id, c in pairs(cfg.motors) do byname[c.name] = w.devices[id] end
+  if opts.saved then actuators.apply_layout(cfg, opts.saved.rcs_map) end
+  local devices = {}
+  for id, c in pairs(cfg.motors) do devices[id] = byname[c.name] end
+
+  local tel = telemetry.new(cfg, { ship = w.ship, aero = w.aero, clock = function() return w.t end })
+  local bank = actuators.new(cfg, devices)
+  bank:seed()
+  local ap = autopilot.new(cfg, opts.saved, tel.rho_at(62), tel)
+  local sim = { w = w, p = w.p, cfg = cfg, ap = ap, bank = bank, tel = tel }
+  local ctl_every = math.floor(cfg.loop_period / 0.05 + 0.5)
+
+  -- Advance seconds of game time. hook(sim, s) runs after each control step.
+  function sim.run(seconds, hook)
+    local n = math.floor(seconds / 0.05 + 0.5)
+    for _ = 1, n do
+      w.tick = w.tick + 1
+      w.t = w.tick * 0.05
+      if w.tick % ctl_every == 0 then
+        local s = tel.read()
+        sim.s = s
+        local out = ap:step(s, w.t, cfg.loop_period, bank)
+        for _, id in ipairs(actuators.ORDER) do bank:set(id, out[id]) end
+        if hook then hook(sim, s) end
+      end
+      bank:service(w.t)
+      w.step(0.05)
+    end
+  end
+
+  function sim.cmd(c, v)
+    local ok, msg = ap:command({ c = c, v = v }, sim.s or tel.read())
+    assert(ok, msg)
+    if c == "mode" and v == "KILL" then bank:kill() end
+  end
+
+  -- Mean commanded RPM of the four lift corners.
+  function sim.lift_cmd()
+    local sum = 0
+    for _, id in ipairs(actuators.GROUPS.lift) do sum = sum + w.cmd[id] end
+    return sum / 4
+  end
+  sim.s = tel.read()
+  return sim
+end
+
+return P
