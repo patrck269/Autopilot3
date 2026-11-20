@@ -124,6 +124,8 @@ At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4
 | SYS | Flight loop health, start-up errors and warnings, live alerts, event log (RCS check results), RCS OFF/ON, RCS CHECK, RCS APPLY, DEBUG, KILL |
 | UFC | Keypad: type a number, then ALT, BRG, or SPD SET |
 
+Horizontal readouts (`GS`, `FWD`, `DRIFT`, `TRK`) use the change in world X/Z position divided by elapsed sample time. Forward and sideways speed are projected onto the current bow; reverse movement gives negative `FWD`. The first sample shows `---` until a second position establishes speed. `REF` is the controller's ramped speed command, not measured movement. This changes display measurement only: flight control and vertical speed still use the CC:VS velocity API, so this does not repair an inaccurate API reading for control.
+
 ## How it flies
 
 **Hover calibration.** Clockwork blade thrust is `0.5·ρ·v_tip²·C_L·area`, and tip speed is proportional to RPM, so each corner's lift is `k·ρ(y)·RPM²`. Inflow from climbing is negligible next to tip speed. The flight loop measures vertical acceleration over 1-second windows against the force the four lift props are actually making and refines the single constant `k`. Hover RPM per corner at any height is then `sqrt(g / (k·ρ(h)))`, with `ρ` from `aero.getAirDensity`. The first guess is 430 RPM at sea level. On the ground, while asked to climb, RPM steps up until the hull lifts, so a low guess only costs a slower liftoff; a guess far above the real hover would launch the hull. It only learns in HOVER and CRUISE: a parked ship with the lift turning (STBY after DEBUG leaves it at 15 RPM) would otherwise learn that 15 RPM hovers. A calibration that puts the sea-level hover under `min_hover_rpm` (100) or over the lift cap is never believed: learning stops at those limits, and such a saved value is replaced by the first guess at start-up. The learned values are saved to `/ap3_cal.dat`.
@@ -167,6 +169,7 @@ lua tests/test_rcscheck.lua
 lua tests/test_install.lua
 lua tests/test_bombs.lua
 lua tests/test_mfd.lua
+lua tests/test_telemetry.lua
 python tests/cc/run.py <CraftOS-PC_console.exe>
 ```
 
@@ -178,4 +181,6 @@ python tests/cc/run.py <CraftOS-PC_console.exe>
 
 `tests/test_rcscheck.lua` checks mixed slide/bearing inference across all corner permutations, refuses ambiguous yaw-only or conflicting observations, and checks heading wraparound. Flight and emulator checks exercise RCS off/on while the pushers are braking, while drifting, and while driving a nonzero cruise target.
 
-`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path.
+`tests/test_telemetry.lua` checks stationary readings despite an accumulating physics velocity, signed and diagonal displacement, irregular sample times, bow changes and clock resets.
+
+`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path. Its `velocity` scenario holds the world position still while the velocity API increases, then moves forward, reverses and stops; the rendered PFD/AP/HSI readouts must follow world movement rather than that API.

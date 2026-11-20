@@ -78,8 +78,9 @@ function M.run(cfg, opts)
       mode = ap.mode,
       tgt = { alt = ap.tgt.alt, brg = ap.tgt.brg, spd = ap.tgt.spd },
       s = {
-        x = s.x, y = s.y, z = s.z, vy = s.vy, gs = s.gs, v_fwd = s.v_fwd, v_side = s.v_side,
-        hdg = s.hdg, track = s.track, pitch = s.pitch, roll = s.roll, yaw_rate = s.yaw_rate,
+        x = s.x, y = s.y, z = s.z, vy = s.vy,
+        gs = s.ground.gs, v_fwd = s.ground.v_fwd, v_side = s.ground.v_side,
+        hdg = s.hdg, track = s.ground.track, pitch = s.pitch, roll = s.roll, yaw_rate = s.yaw_rate,
         rho = s.rho, mass = s.mass,
       },
       alt = {

@@ -12,6 +12,8 @@
 - Raise RCS-check pulses to 2000 RPM. Accept bearing-only evidence when other corners make the layout unique; otherwise report diagonal candidates and conditional thrust direction without saving a guessed mapping.
 - Accept negative speed targets for reverse CRUISE, with symmetric speed limits and pitch protection. Preview stopping impulse from paced RPM reductions so the zero target brakes either direction without repeated fore/aft surges.
 - Add AP's SPD 0 button between the +1 and −1 speed buttons, retaining all four step controls. It commands a controlled stop; altitude hold and motor pacing remain active.
+- Measure displayed horizontal speed, drift and track from world-position changes instead of physics-reported velocity. A stationary hull reads zero and backing up gives negative forward speed; thrust control and vertical speed are unchanged.
+- Add telemetry sampling regressions and a CraftOS display scenario for stationary, forward and reverse movement while the velocity API accumulates independently.
 
 ## 3.1.0
 

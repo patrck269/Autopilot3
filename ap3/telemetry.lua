@@ -26,6 +26,7 @@ function M.new(cfg, api)
   local e2 = util.cross(e1, up)
   local ship, aero, clock = api.ship, api.aero, api.clock
   local last_t, last_pitch, last_roll, last_hdg, last_rate
+  local position_t, position_x, position_z
 
   local self = { e1 = e1, e2 = e2, up = up }
 
@@ -65,6 +66,19 @@ function M.new(cfg, api)
     local fh = unit({ x = f.x, y = 0, z = f.z })
     local rh = { x = -fh.z, y = 0, z = fh.x }
 
+    -- Display speed follows displacement, independently of the physics velocity
+    -- used by control. The first sample has no measured ground speed yet.
+    local ground = {}
+    if position_t and now > position_t then
+      local dt = now - position_t
+      local vx, vz = (pos.x - position_x) / dt, (pos.z - position_z) / dt
+      ground.gs = math.sqrt(vx * vx + vz * vz)
+      ground.v_fwd = vx * fh.x + vz * fh.z
+      ground.v_side = vx * rh.x + vz * rh.z
+      if ground.gs > 0.5 then ground.track = (atan2(vx, -vz) * DEG) % 360 end
+    end
+    position_t, position_x, position_z = now, pos.x, pos.z
+
     local heading = (atan2(f.x, -f.z) * DEG) % 360
     local pitch = math.asin(util.clamp(f.y, -1, 1)) * DEG
     local roll = math.asin(util.clamp(-r.y, -1, 1)) * DEG
@@ -87,6 +101,7 @@ function M.new(cfg, api)
       lv1 = lv1, lv2 = lv2, -- velocity along the hull's own horizontal axes
       t = now,
       x = pos.x, y = pos.y, z = pos.z,
+      ground = ground,
       vx = vel.x, vy = vel.y, vz = vel.z,
       gs = math.sqrt(vel.x * vel.x + vel.z * vel.z),
       v_fwd = util.dot(vel, fh),

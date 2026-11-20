@@ -20,6 +20,22 @@ local w = W.new(cfg.motors, { hover_rpm_sea = 900 }, cfg.gravity)
 _G.ship = w.ship
 _G.aero = w.aero
 
+-- Fault injection: physics velocity accumulates while displayed world motion is
+-- independently stationary, forward or reverse.
+local motion_speed, motion_x, motion_at = 0, 100, os.clock()
+local function set_motion(speed)
+  local now = os.clock()
+  motion_x = motion_x + motion_speed * (now - motion_at)
+  motion_at, motion_speed = now, speed
+end
+if scenario == "velocity" then
+  ship.getWorldspacePosition = function()
+    return { x = motion_x + motion_speed * (os.clock() - motion_at), y = 200, z = 300 }
+  end
+  ship.getVelocity = function() return { x = 20 + 2 * os.clock(), y = 0, z = 0 } end
+  ship.getQuaternion = function() return { v = { x = 0, y = 0, z = 0 }, a = 1 } end
+end
+
 local report = {}
 local failures = 0
 local function check(cond, label, detail)
@@ -391,7 +407,43 @@ local function missing_script()
   dump("attached")
 end
 
-local scripts = { both = both_script, missing = missing_script }
+local function velocity_script()
+  local function reading(name, label)
+    return tonumber(screen(name):match(label .. "%s*(%-?%d+%.?%d*)"))
+  end
+  local function near(name, label, expected)
+    local value = reading(name, label)
+    check(value ~= nil and math.abs(value - expected) < 0.15,
+      name .. " " .. label .. " follows world movement", tostring(value) .. " expected " .. expected)
+  end
+  sleep(2)
+  near("monitor_4", "FWD", 0)
+  near("monitor_4", "GS", 0)
+  type_line("spd 20")
+  type_line("cruise")
+  press("monitor_4", "B3") -- AP
+  sleep(1)
+  near("monitor_4", "FWD", 0)
+  local ref = reading("monitor_4", "REF")
+  check(ref ~= nil and ref > 0 and math.abs(reading("monitor_4", "FWD") or math.huge) < 0.15,
+    "command reference can ramp while measured speed stays zero", ref)
+  dump("stationary with accumulating physics velocity")
+  set_motion(3)
+  sleep(1)
+  near("monitor_4", "FWD", 3)
+  near("monitor_6", "GS", 3)
+  set_motion(-2.5)
+  sleep(1)
+  near("monitor_4", "FWD", -2.5)
+  near("monitor_6", "GS", 2.5)
+  dump("reverse world movement with positive physics velocity")
+  set_motion(0)
+  sleep(1)
+  near("monitor_4", "FWD", 0)
+  near("monitor_6", "GS", 0)
+end
+
+local scripts = { both = both_script, missing = missing_script, velocity = velocity_script }
 local ok, err = pcall(parallel.waitForAny,
   physics,
   function() shell.run("/ap3_start.lua") end,
