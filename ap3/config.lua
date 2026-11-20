@@ -10,10 +10,10 @@ return {
     lift_bow_stbd   = { name = "electric_motor_2", cap = 2750, sign = 1, label = "E2 LIFT BOW STBD" },
     lift_stern_port = { name = "electric_motor_5", cap = 2750, sign = 1, label = "E5 LIFT STRN PORT" },
     lift_stern_stbd = { name = "electric_motor_3", cap = 2750, sign = 1, label = "E3 LIFT STRN STBD" },
-    bow_port        = { name = "electric_motor_6", cap = 2000, sign = 1, label = "R6 BOW PORT" },
-    bow_stbd        = { name = "electric_motor_1", cap = 2000, sign = 1, label = "R1 BOW STBD" },
-    stern_port      = { name = "electric_motor_4", cap = 2000, sign = 1, label = "R4 STRN PORT" },
-    stern_stbd      = { name = "electric_motor_0", cap = 2000, sign = 1, label = "R0 STRN STBD" },
+    bow_port        = { name = "electric_motor_6", cap = 4000, sign = 1, label = "R6 BOW PORT" },
+    bow_stbd        = { name = "electric_motor_1", cap = 4000, sign = 1, label = "R1 BOW STBD" },
+    stern_port      = { name = "electric_motor_4", cap = 4000, sign = 1, label = "R4 STRN PORT" },
+    stern_stbd      = { name = "electric_motor_0", cap = 4000, sign = 1, label = "R0 STRN STBD" },
     thrust_port     = { name = "electric_motor_8", cap = 1500, sign = 1, label = "L8 PUSH PORT" },
     thrust_stbd     = { name = "electric_motor_9", cap = 1500, sign = 1, label = "S9 PUSH STBD" },
   },
@@ -49,7 +49,7 @@ return {
     min_interval = { lift = 1.0, thrust = 1.0, rcs = 1.0 }, -- seconds between writes to one motor
     deadband = { lift = 5, thrust = 15, rcs = 100 },        -- smallest RPM change worth a write
     weight = { lift = 3, thrust = 2, rcs = 1.5 },            -- which group gets the next write
-    slew = { thrust = 400, lift = 300, rcs = 1000 },         -- largest RPM change per write
+    slew = { thrust = 400, lift = 300, rcs = 2000 },         -- largest RPM change per write
     rcs_min_rpm = 100,    -- smaller RCS commands are sent as 0 (finer pulses for a strong RCS)
   },
 
@@ -90,14 +90,14 @@ return {
     cap_margin = 0.5,     -- the speed reference stops this far under the cap
     ramp_time = 12,       -- reference reaches the new target in this many s (requirement: within 15 s)
     min_ramp = 0.3,       -- slowest reference ramp, m/s^2
-    vel_gain = 0.8,       -- (m/s^2) per m/s of speed error
-    thrust_lag = 1.0,     -- seconds of actuator response anticipated by pending-force and ramp preview
+    vel_gain = 1.0,       -- (m/s^2) per m/s of predicted speed error
+    thrust_lag = 1.2,     -- minimum preview horizon; grows if paced RPM ramp-down needs longer
     int_gain = 0.15,      -- integral (m/s^2) per (m/s * s)
     int_limit = 2.0,      -- integral limit, m/s^2
     stop_band = 0.2,      -- stopped: brake drift down to this (m/s), then the pushers rest
     hover_engage = 0.8,   -- stopped: drift (m/s) that wakes the pushers again
     hold_band = 0.3,      -- cruising within this of the target speed (m/s): thrust is held
-    hold_release = 1.0,   -- held thrust is recomputed once speed drifts this far (m/s)
+    hold_release = 0.5,   -- release early enough to stay near either signed target, including the cap margin
     pitch_limit = 6,      -- degrees of acceleration-induced nose dip before thrust is held back
     -- Thrust model a = A*f - D*v|v| (f = normalised force, rpm^2/cap^2), learned in flight.
     accel_full = 1.5,     -- first guess: m/s^2 at full pusher thrust
@@ -124,19 +124,19 @@ return {
     high_speed_gain = 2.0,
     -- Positive RPM pulls on every RCS corner (fixed). Only the strength is
     -- learned in flight; these are the first guesses at full RCS.
-    yaw_authority = 2.5,  -- deg/s^2 of yaw at full RCS
-    min_authority = 0.1,  -- smallest yaw strength believed (deg/s^2)
-    max_authority = 50,   -- largest yaw strength believed; a saved value past it is discarded
+    yaw_authority = 10,   -- deg/s^2 at full RCS; doubling RPM quadruples force
+    min_authority = 0.4,  -- smallest yaw strength believed (deg/s^2)
+    max_authority = 200,  -- largest yaw strength believed; a saved value past it is discarded
     -- Turn force (share of full) a 0.5 s window needs before the strength is
     -- learned. Weaker windows mostly measure yaw from something else (a bump,
     -- an off-centre thrust line). Keep it under what a turn commands at
-    -- max_authority (about 0.06), so a high estimate can still come down.
-    learn_min_force = 0.03,
-    probe_limit = 0.2,    -- sideways force allowed until the bow axis is confirmed
+    -- max_authority (about 0.015), so a high estimate can still come down.
+    learn_min_force = 0.0075, -- same absolute learning force as 3% at 2000 RPM
+    probe_limit = 0.05,   -- same absolute sideways probe as 20% at 2000 RPM
     -- Sideslip: drift past sway_engage (m/s) is braked with the same-side
     -- pullers until it is under sway_settle, then the sway force rests.
-    sway_authority = 0.75, -- first guess: m/s^2 sideways at full RCS
-    min_sway_authority = 0.02,
+    sway_authority = 3.0, -- first guess: m/s^2 sideways at full RCS
+    min_sway_authority = 0.08,
     sway_gain = 0.3,      -- (m/s^2) per m/s of sideslip
     sway_engage = 0.5,    -- m/s
     sway_settle = 0.15,   -- m/s
@@ -152,7 +152,7 @@ return {
   -- motor is at which corner. Each corner pulls at rpm for 'on' s, then
   -- coasts while its effect is measured, then the hull settles.
   rcs_check = {
-    rpm = 1000, on = 4, coast = 2, settle = 4,
+    rpm = 2000, on = 4, coast = 2, settle = 4,
     min_v = 0.03,         -- m/s: smaller changes in speed are not a reading
     min_deg = 0.1,        -- degrees: the two corners on a side must turn the hull this differently
   },

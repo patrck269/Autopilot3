@@ -7,6 +7,11 @@
 - Invert bomb-door output: powered closes, unpowered opens. Startup closes the doors without firing any bomb triggers; manual and timed closing use the same polarity.
 - Add motor-cadence, bearing-flicker, cruise-arrival and door-polarity regressions.
 - Reduce the door-opening drop lockout from three seconds to one second; salvo spacing and automatic closing delays are unchanged.
+- `rcs off` also releases the pushers from fore/aft station keeping in HOVER and zero-speed CRUISE. Nonzero CRUISE propulsion and altitude hold remain active; `rcs on` restarts speed control from the current drift.
+- Double only the RCS cap to 4000 RPM and its write step to 2000 RPM. Rescale full-force strength guesses/bounds and force-share learning/probe thresholds; lift and pusher caps and write cadence stay unchanged.
+- Raise RCS-check pulses to 2000 RPM. Accept bearing-only evidence when other corners make the layout unique; otherwise report diagonal candidates and conditional thrust direction without saving a guessed mapping.
+- Accept negative speed targets for reverse CRUISE, with symmetric speed limits and pitch protection. Preview stopping impulse from paced RPM reductions so the zero target brakes either direction without repeated fore/aft surges.
+- Add AP's SPD 0 button between the +1 and −1 speed buttons, retaining all four step controls. It commands a controlled stop; altitude hold and motor pacing remain active.
 
 ## 3.1.0
 

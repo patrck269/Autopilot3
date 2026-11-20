@@ -260,6 +260,9 @@ do
   local want = 0.5 * (RCS_CAP / 1000) ^ 2
   check(math.abs(migrated.ap.hdg:authority() - want) < 1e-9,
     "saved yaw authority scales with the RPM cap", string.format("%.2f", migrated.ap.hdg:authority()))
+  local weak_saved = plant.new({ saved = { yaw_b = 0.15, rcs_cap = 2000 } })
+  check(math.abs(weak_saved.ap.hdg:authority() - 0.6) < 1e-9,
+    "old weak calibration is validated after cap rescaling", tostring(weak_saved.ap.hdg:authority()))
   local sim = plant.new({ y = 200, lift = 900, psi = 0, yaw_accel = 0.3,
     saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 0.2, rcs_cap = RCS_CAP } })
   sim.cmd("alt", 200)
@@ -423,9 +426,14 @@ do
   good.cmd("mode", "HOVER")
   good.run(5)
   good.cmd("rcs_check")
+  local good_check = good.ap.check
   good.run(60)
-  check(good.ap.rcs_found == nil and events(good):find("MATCHES CONFIG", 1, true) ~= nil,
-    "a correctly labelled hull reports a match", events(good))
+  local matching = good_check:layout()
+  local matches = matching ~= nil
+  for _, id in ipairs({ "bow_port", "bow_stbd", "stern_port", "stern_stbd" }) do
+    matches = matches and matching[id] == id
+  end
+  check(matches and good.ap.rcs_found == nil, "a correctly labelled hull needs no remap", events(good))
 end
 
 print("23. Saved turning strength from noise: a hover turn still uses the full RCS")
@@ -541,6 +549,92 @@ do
     local score, id = sim.w.peak_flicker()
     check(score < 128, "bearing flicker stays below destruction threshold", tostring(id) .. ": " .. score)
   end
+end
+
+print("29. RCS off releases fore/aft station keeping, not cruise propulsion")
+do
+  local sim = plant.new({ y = 200, lift = 900, v_fwd = 5,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", 200)
+  sim.cmd("mode", "HOVER")
+  sim.run(2)
+  check(sim.w.cmd.thrust_port < 0, "pushers are braking drift before handoff")
+  sim.cmd("rcs_off")
+  local released = true
+  sim.run(6, function(s2)
+    released = released and s2.bank.ch.thrust_port.desired == 0 and s2.bank.ch.thrust_stbd.desired == 0
+    for _, id in ipairs({ "bow_port", "bow_stbd", "stern_port", "stern_stbd" }) do
+      released = released and s2.bank.ch[id].desired == 0
+    end
+  end)
+  check(released, "RCS off commands all horizontal station-keeping motors to zero")
+  check(sim.w.cmd.thrust_port == 0 and sim.w.cmd.thrust_stbd == 0, "running pushers stop after paced handoff")
+  check(math.abs(sim.s.y - 200) < 2, "altitude hold remains active")
+  sim.w.vx, sim.w.vz = 0, -5
+  sim.run(2)
+  check(sim.w.cmd.thrust_port == 0 and sim.w.cmd.thrust_stbd == 0, "new fore/aft drift does not wake pushers")
+  sim.cmd("rcs_on")
+  local braking = false
+  sim.run(20, function(s2) braking = braking or s2.w.cmd.thrust_port < 0 end)
+  check(braking and math.abs(sim.s.v_fwd) < 0.8, "RCS on resumes braking the current drift",
+    string.format("%.2f m/s", sim.s.v_fwd))
+  sim.cmd("rcs_off")
+  sim.cmd("spd", 10)
+  sim.cmd("mode", "CRUISE")
+  sim.run(35)
+  check(sim.w.cmd.thrust_port > 0 and math.abs(sim.s.v_fwd - 10) < 1,
+    "nonzero CRUISE target still drives pushers with RCS off", string.format("%.2f m/s", sim.s.v_fwd))
+  sim.cmd("spd", 0)
+  local zero_target = true
+  sim.run(6, function(s2)
+    zero_target = zero_target and s2.bank.ch.thrust_port.desired == 0 and s2.bank.ch.thrust_stbd.desired == 0
+  end)
+  check(zero_target and sim.w.cmd.thrust_port == 0 and sim.w.cmd.thrust_stbd == 0,
+    "zero-speed CRUISE also releases station keeping with RCS off")
+end
+
+print("30. Signed speed: reverse cruise, direction changes, and zero")
+do
+  local sim = plant.new({ y = 200, lift = 900,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", 200)
+  sim.cmd("mode", "HOVER")
+  sim.run(40)
+  sim.cmd("spd", -10)
+  sim.cmd("mode", "CRUISE")
+  local start, reached, peak_back = sim.w.t, nil, 0
+  sim.run(35, function(s2, s)
+    peak_back = math.max(peak_back, -s.v_fwd)
+    if not reached and math.abs(s.v_fwd + 10) < 1 then reached = s2.w.t - start end
+  end)
+  check(sim.w.cmd.thrust_port < 0 and math.abs(sim.s.v_fwd + 10) < 1,
+    "negative target cruises astern", string.format("%.2f m/s", sim.s.v_fwd))
+  check(reached ~= nil and reached <= 15 and peak_back < 11,
+    "reverse arrival meets the forward timing and overshoot bounds",
+    string.format("reach %.1f s, peak %.2f", reached or -1, peak_back))
+  check(math.abs(sim.s.y - 200) < 2 and math.abs(util.wrap180(sim.s.hdg)) < HDG_CRUISE,
+    "reverse cruise holds altitude and bow heading")
+  sim.cmd("rcs_off")
+  sim.run(5)
+  check(math.abs(sim.s.v_fwd + 10) < 1, "RCS off maintains the explicit reverse speed",
+    string.format("%.2f m/s", sim.s.v_fwd))
+  sim.cmd("rcs_on")
+  sim.cmd("spd", 10)
+  sim.run(35)
+  check(sim.w.cmd.thrust_port > 0 and math.abs(sim.s.v_fwd - 10) < 1,
+    "reverse-to-forward transition crosses zero and settles", string.format("%.2f m/s", sim.s.v_fwd))
+  sim.cmd("spd", -50)
+  check(sim.ap.tgt.spd == -35, "reverse target clamps at minus 35")
+  local max_back = 0
+  sim.run(50, function(_, s) max_back = math.max(max_back, -s.v_fwd) end)
+  check(max_back <= 35.5 and math.abs(sim.s.v_fwd + 35) < 1,
+    "reverse speed obeys the same hard cap", string.format("peak %.2f, final %.2f", max_back, sim.s.v_fwd))
+  sim.cmd("spd", 0)
+  local forward_brake = false
+  sim.run(25, function(s2) forward_brake = forward_brake or s2.w.cmd.thrust_port > 0 end)
+  check(forward_brake and math.abs(sim.s.v_fwd) < 0.5,
+    "zero target brakes reverse motion", string.format("%.2f m/s", sim.s.v_fwd))
+  check(sim.w.cmd.thrust_port == 0 and sim.w.cmd.thrust_stbd == 0, "pushers rest after stopping")
 end
 
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))

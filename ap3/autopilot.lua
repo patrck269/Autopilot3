@@ -115,7 +115,7 @@ function M:command(msg, s)
     return self:command({ c = "brg", v = base + v }, s)
   elseif c == "spd" then
     if not util.finite(v) then return false, "speed must be a number" end
-    self.tgt.spd = util.clamp(v, 0, self.cfg.speed.max)
+    self.tgt.spd = util.clamp(v, -self.cfg.speed.max, self.cfg.speed.max)
     if self.mode == "CRUISE" and s then self.spd:set_target(self.tgt.spd, s.v_fwd) end
     self:log("SPD " .. util.fmt(self.tgt.spd))
     return true, "speed " .. util.fmt(self.tgt.spd)
@@ -265,8 +265,20 @@ function M:step(s, now, dt, bank)
   end
 
   self:put_lift(out, self.alt:command(s, self.tgt.alt, dt, self.caps.lift_bow_port), s, dt)
-  local pending = util.ssq(thr_applied) / (thr_cap * thr_cap) - thr_f
-  local T = self.spd:command(s, dt, thr_cap, thr_applied, pending)
+  local T = 0
+  if self.rcs_off and self.spd.target == 0 then
+    -- At zero target the pushers are fore/aft RCS, not cruise propulsion.
+    -- Release them to the helm too; do not integrate against manual drift.
+    self.pusher_released = true
+    self.spd.phase, self.spd.saturated = "OFF", 0
+  else
+    if self.pusher_released then
+      self.spd:reset(s.v_fwd)
+      self.pusher_released = false
+    end
+    local pending = util.ssq(thr_applied) / (thr_cap * thr_cap) - thr_f
+    T = self.spd:command(s, dt, thr_cap, thr_applied, pending)
+  end
   out.thrust_port, out.thrust_stbd = T, T
   local deadzone = self.mode == "HOVER" and cfg.heading.hover_deadzone or cfg.heading.cruise_deadzone
   -- Until the frame is confirmed (or learned), a wrong axis would make the

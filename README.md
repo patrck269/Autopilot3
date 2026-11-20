@@ -12,10 +12,10 @@ Needs CC: Tweaked and CC:VS (`ship` and `aero` APIs). Everything runs on one com
 | `electric_motor_2` | E2 | Lift, bow starboard (puller) | 0–2750 |
 | `electric_motor_5` | E5 | Lift, stern port (puller) | 0–2750 |
 | `electric_motor_3` | E3 | Lift, stern starboard (puller) | 0–2750 |
-| `electric_motor_6` | R6 | RCS, bow port (puller) | 0–2000 |
-| `electric_motor_1` | R1 | RCS, bow starboard (puller) | 0–2000 |
-| `electric_motor_4` | R4 | RCS, stern port (puller) | 0–2000 |
-| `electric_motor_0` | R0 | RCS, stern starboard (puller) | 0–2000 |
+| `electric_motor_6` | R6 | RCS, bow port (puller) | 0–4000 |
+| `electric_motor_1` | R1 | RCS, bow starboard (puller) | 0–4000 |
+| `electric_motor_4` | R4 | RCS, stern port (puller) | 0–4000 |
+| `electric_motor_0` | R0 | RCS, stern starboard (puller) | 0–4000 |
 | `electric_motor_8` | L8 | Port pusher on the stern, facing aft. Positive RPM moves the ship forward; negative is reverse thrust | ±1500 |
 | `electric_motor_9` | S9 | Starboard pusher on the stern, facing aft | ±1500 |
 
@@ -50,11 +50,13 @@ The bow axis doesn't have to be right in `frame.forward` (default +X). The fligh
 
 If the heading isn't held and the ship strafes when it should turn, the RCS corner labels are probably wrong. For example, if R4 really sits at stern *starboard*, the "right turn" pair (bow starboard + stern port) pulls both starboard corners and the ship strafes. SYS then shows "TURN COMMANDS DO NOT TURN THE SHIP: RUN 'rcs check'".
 
-In HOVER, type `rcs check` (or SYS: RCS CHECK, then CONF CHECK). Each of the four RCS motors pulls at 1000 RPM for 4 s, one at a time, about 45 s in all. The lift holds altitude; heading, sideslip and the pushers rest. For each motor it measures which way the hull slides and turns. The side it slides toward is its side. Of the two on a side, the bow one swings the nose toward that side more than the stern one does. The SYS event log shows each reading and the result:
+In HOVER, type `rcs check` (or SYS: RCS CHECK, then CONF CHECK). Each of the four RCS motors pulls at 2000 RPM for 4 s, one at a time, about 45 s in all. The lift holds altitude; heading, sideslip and the pushers rest. For each motor it measures which way the hull slides and turns. The side it slides toward is its side. Of the two on a side, the bow one swings the nose toward that side more than the stern one does. The SYS event log shows each reading and the result:
 
 - "RCS LAYOUT MATCHES CONFIG": nothing to do.
 - "RCS LAYOUT DIFFERS", with e.g. "STERN_STBD IS R4": type `rcs apply` (or SYS: RCS APPLY). The layout is saved with the calibration and the computer restarts with it. The lift keeps spinning, so it takes over in HOVER. The saved layout overrides the RCS motor names in `ap3/config.lua` and survives reinstalls.
-- "RCS CHECK UNCLEAR": a corner didn't move the hull clearly; nothing changes.
+- "RCS CHECK UNCLEAR": the observations do not identify one layout; nothing changes. A bearing change still counts as evidence when sideways motion is too small. With outward-facing pullers, right yaw indicates bow starboard or stern port (`BS/SP`); left yaw indicates bow port or stern starboard (`BP/SS`). Other corners' slide measurements can resolve the remaining choice. Yaw alone cannot distinguish a misplaced motor from reversed thrust, so it never saves an arbitrary layout.
+
+For yaw-only responses, the log also reports the lateral pull direction **if the named mounting location is correct**. For example, a right turn from a correctly mounted bow-port motor indicates a starboard pull, not its expected port pull. This is a direction warning, not proof that its mounting label is correct.
 
 If the sideways brake runs for 10 s and the drift has grown, it stops and SYS shows "SIDEWAYS BRAKE STOPPED: IT MADE THE DRIFT WORSE". That means a wrong bow axis or wrong corner labels. It starts again on the next HOVER or CRUISE engagement.
 
@@ -64,7 +66,8 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 |---|---|---|
 | `alt 150` | AP: ALT ±1/±10, UFC: ALT SET | Target altitude (world Y) |
 | `brg 90` | AP: BRG ±5, HSI: BRG ±1/±10/SYNC, UFC: BRG SET | Target bearing, 0 = N, 90 = E |
-| `spd 30` | AP: SPD ±1/±5, UFC: SPD SET | Target speed, clamped to 0–35 m/s |
+| `spd 30` / `spd -5` | AP: SPD ±1/±5, UFC: SPD SET | Signed target speed, clamped to −35…+35 m/s. Negative backs up while keeping the bow on the selected bearing; engage CRUISE to drive it |
+| `spd 0` | AP: SPD 0, between SPD +1 and SPD −1 | Brake to a stop and rest the pushers while retaining altitude/heading control. With `rcs off`, release the pushers instead of station-keeping braking |
 | `hover` | HOVR | Climb or descend to the altitude and hold it. Brake to a stop, hold heading, cancel drift |
 | `cruise` | CRZ | Altitude, bearing, and speed together |
 | `stby` | STBY | Autopilot off: pushers and RCS to 0, lift left as it is |
@@ -75,7 +78,7 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 | `rcs check` | SYS: RCS CHECK then CONF CHECK | In HOVER: find which motor sits at which RCS corner (see RCS check) |
 | `rcs apply` | SYS: RCS APPLY | Use the layout the check found; saved, then the computer restarts |
 | `rcs reset` | CAL: RCS RESET then CONF | Forget the learned RCS turning and sideways strength: back to the first guesses, learned again in flight. The corner layout from `rcs apply` and the bow axis stay |
-| `rcs off` / `rcs on` | SYS: RCS OFF / RCS ON | Hand steering to the Eureka helm: the RCS rests at 0 and the heading loop stops. `rcs on` takes it back and holds the heading the ship is on. The setting survives a reboot (`/ap3_rcs.off`) |
+| `rcs off` / `rcs on` | SYS: RCS OFF / RCS ON | Hand horizontal station keeping to the Eureka helm: corner RCS rests at 0, heading/sideslip control stops, and the pushers stop braking fore/aft drift in HOVER or zero-speed CRUISE. Nonzero CRUISE propulsion and altitude hold stay active. `rcs on` resumes from the current speed and heading. The setting survives a reboot (`/ap3_rcs.off`) |
 | `doors open` / `doors close` | BOMB: DOOR OPEN / DOOR CLOSE | Bomb bay doors |
 | `salvo 1` (`3`, `5`, `10`, `all`) | BOMB: 1 3 5 10 ALL | Bombs per drop |
 | `drop` | BOMB: DROP | Drop one salvo (see Bomb bay) |
@@ -129,11 +132,11 @@ At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4
 
 **Levelling.** The collective lift is spread over the four corners: bow port `L·(1+P−R)`, bow starboard `L·(1+P+R)`, stern port `L·(1−P−R)`, stern starboard `L·(1−P+R)`. `P` and `R` come from a PD loop on pitch and roll (positive pitch is nose up, positive roll is starboard down) plus an integral trim, up to 30% of `L`, that learns an off-centre load such as a half-empty bomb bay. CAL shows the trims. Levelling waits until the bow axis is confirmed, because with `frame.forward` wrong it would tip the hull further.
 
-**Speed.** The speed reference ramps to the target in 12 s and stops 0.5 m/s under the 35 m/s cap. Both pushers always get the same RPM. Control uses normalised force (`RPM²`) with acceleration and drag learned in flight. A one-second preview tapers acceleration before the ramp ends and accounts for force still arriving as the props spin up. Slowing down uses negative RPM on the pushers. If acceleration pitches the nose past `pitch_limit` (6°), thrust is held back and the ramp pauses until the nose recovers. Cruise thrust is held only when both measured and projected speed are within 0.3 m/s of target, and released if either drifts 1 m/s. The integral freezes while thrust is held. Stopped (HOVER), the pushers rest until drift passes 0.8 m/s, brake it under 0.2 m/s, and rest again.
+**Speed.** The signed speed reference ramps toward a moving target in 12 s and stops 0.5 m/s inside either ±35 m/s cap. Negative targets drive astern without turning the bow around. Both pushers get the same RPM. Control uses normalised force (`RPM²`) with acceleration and drag learned in flight. A preview of at least 1.2 s tracks future reference and velocity, accounting for propeller spin and the force left while paced writes reduce RPM. Zero-speed requests reserve response time for braking, then rest the pushers. Pitch protection still holds thrust back when acceleration tips the nose past 6°. Cruise thrust is held only when measured and projected speeds are within 0.3 m/s of target, and released if either drifts 0.5 m/s. Its integral freezes while thrust is held. At zero speed with RCS enabled, fore/aft drift over 0.8 m/s wakes braking again; `rcs off` releases this station-keeping role.
 
 **Heading and sideslip.** The RCS only pulls; no motor ever reverses. For a turn force `u` and a sideways force `s`, each corner gets `max(0, …)` of: bow starboard `u+s`, stern port `u−s`, bow port `−u−s`, stern starboard `s−u`. A pure turn is a diagonal pair (right: bow starboard + stern port; left: bow port + stern starboard), a pure strafe is a same-side pair (both starboard corners pull to starboard), and blends stay proportional. One corner on its own mostly strafes the hull, because the Eureka helm's stabilisation resists the turn.
 
-The bearing error sets a yaw-rate command, and a PI loop on yaw rate (taken from the change in heading between samples) gives a yaw acceleration. The turn profile and integral gain are limited for the 2000 RPM RCS so the ship does not bounce ±2° across a new bearing. The directions are fixed: positive RPM pulls on every corner. Only the turning and sideways *strength* is learned in flight, and commands are divided by it. Turning strength is only learned from half-second windows where the RCS makes at least 3% of its full turn force. Weaker windows mostly measure yaw from something else, such as an off-centre thrust line or a bump, and crediting that to a tiny RCS force inflates the strength. An inflated strength shrinks every turn command, and the ship stops turning. The learned value stays between 0.1 and 50 deg/s² at full RCS. A saved value above 50 is discarded at start-up, and learning starts again from the first guess. If the RCS pulls at full for 3 s and the heading is still off, SYS shows "RCS AT FULL: HEADING NOT HELD".
+The bearing error sets a yaw-rate command, and a PI loop on yaw rate gives a yaw acceleration. Commands are divided by the learned turning strength. The RCS cap is 4000 RPM; full-force turning and sideways strength guesses and bounds are four times their 2000 RPM values because force scales with RPM squared. Saved turning calibration rescales automatically using its recorded cap. Turning is learned from half-second windows with at least 0.75% of full turn force, preserving the old absolute learning threshold. The same absolute unconfirmed-axis probe is now 5% of full sway force. Turning strength stays between 0.4 and 200 deg/s² at full RCS. If the RCS pulls at full for 3 s and the heading is still off, SYS shows "RCS AT FULL: HEADING NOT HELD".
 
 Station keeping: a heading correction starts when the heading is more than 2° off (1° in CRUISE) or the hull turns faster than 0.5°/s, and stops within 0.5°. In between, the RCS holds the trim its integral learned (an off-centre thrust line, say) or rests. Sideways drift over 0.5 m/s, including drift the ship already had when the autopilot took over, is braked with the same-side pair until it is under 0.15 m/s; then the sideways force rests. The smallest RCS pulse is 100 RPM. Heading gets first call on the RCS.
 
@@ -141,7 +144,7 @@ Clockwork props don't follow the motor at once: the bearing changes spin by at m
 
 **Motor pacing.** `setSpeed` runs on the server thread and stalls for a tick, so the flight loop only records the RPM each motor should have, and a writer task sends at most one write per tick:
 
-- each motor is written at most once a second. Changes under 5 RPM (lift), 15 (pushers) and 100 (RCS) are skipped, but a start or a stop is always written. One write changes a motor by at most 300 RPM (lift), 400 (pushers) or 1000 (RCS). Sign reversals pass through 0
+- each motor is written at most once a second. Changes under 5 RPM (lift), 15 (pushers) and 100 (RCS) are skipped, but a start or a stop is always written. One write changes a motor by at most 300 RPM (lift), 400 (pushers) or 2000 (RCS). Sign reversals pass through 0
 - the motors move in groups: the four lift corners, the four RCS corners and the two pushers. A group is written as one batch, motors turning down first, then motors turning up, on consecutive ticks with the values chosen when the batch started. Each member must be eligible in its planned tick slot before the batch starts, and its interval is checked again at the write. A due motor cannot pull a recently written partner into another update. Intervals run from the completion of each yielding call
 - a running batch goes first, then the lift, then the group with the largest need
 - KILL bypasses all of it: every motor goes to 0 at once
@@ -152,7 +155,7 @@ Changing an electric motor's speed detaches and reattaches its kinetic network. 
 
 - Peripheral names come from the motor and relay numbers in the spec. If SYS lists missing motors or relays, read the real names from the wired modems and edit `ap3/config.lua`.
 - If a motor's `getSpeed` doesn't report its RPM, the computer can't tell after a reboot that the lift is spinning, so it doesn't take over in HOVER on its own.
-- RCS turning force is capped at 2000 RPM. If the pusher thrust line is far off the centre of mass, the heading can still drift during hard acceleration (SYS shows "RCS AT FULL").
+- RCS turning force is capped at 4000 RPM. If the pusher thrust line is far off the centre of mass, the heading can still drift during hard acceleration (SYS shows "RCS AT FULL").
 - Gains are tuned against a simulated hull. In-flight learning covers lift, thrust, drag, and RCS strength and direction; the remaining gains are in `ap3/config.lua` if the real hull needs different ones.
 
 ## Tests
@@ -160,6 +163,7 @@ Changing an electric motor's speed detaches and reattaches its kinetic network. 
 ```
 lua tests/test_flight.lua
 lua tests/test_actuators.lua
+lua tests/test_rcscheck.lua
 lua tests/test_install.lua
 lua tests/test_bombs.lua
 lua tests/test_mfd.lua
@@ -171,5 +175,7 @@ python tests/cc/run.py <CraftOS-PC_console.exe>
 `tests/test_install.lua` checks that the installer downloads every module `startup.lua` can load. `tests/test_bombs.lua` checks the bay layout, salvo selection, the interlocks, the trigger pulse and door timing, and the bay wrapper (save before fire, bad save files, a missing door relay, salvo sizes). `tests/test_mfd.lua` checks that every display keeps three different formats and every page is on screen at most once, whatever is pressed or loaded.
 
 `tests/test_actuators.lua` checks staggered batch eligibility, pinned targets, per-motor write intervals under rapid requests, downstream bearing flicker, paired pushers, completion-time pacing, and emergency zero interrupting a batch. Flight checks include plain-hover starts to 20 and 30 m/s with less than 1 m/s overshoot in the simulated hull.
+
+`tests/test_rcscheck.lua` checks mixed slide/bearing inference across all corner permutations, refuses ambiguous yaw-only or conflicting observations, and checks heading wraparound. Flight and emulator checks exercise RCS off/on while the pushers are braking, while drifting, and while driving a nonzero cruise target.
 
 `tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path.

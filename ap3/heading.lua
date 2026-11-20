@@ -40,14 +40,14 @@ function M.new(cfg, saved)
   local c = cfg.heading
   local guess = c.yaw_authority
   local loaded = false
-  if saved and util.finite(saved.yaw_b) and saved.yaw_b >= c.min_authority then
+  if saved and util.finite(saved.yaw_b) and saved.yaw_b > 0 then
     -- Authority is defined at full normalised force. Preserve an old
     -- calibration when the RPM cap changes: prop force scales with RPM^2.
     local old_cap = util.finite(saved.rcs_cap) and saved.rcs_cap > 0 and saved.rcs_cap or 1000
     local new_cap = cfg.motors.bow_port.cap
     local b = saved.yaw_b * (new_cap / old_cap) ^ 2
     -- Past the maximum it was learned from noise: start again from the guess.
-    if b <= c.max_authority then
+    if b >= c.min_authority and b <= c.max_authority then
       guess = b
       loaded = true
     end

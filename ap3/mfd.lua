@@ -2,6 +2,7 @@
 --
 -- Every monitor is one MFD with option select buttons (OSBs) around its edge:
 --   top row T1-T5 and side columns L1-L4 / R1-R4: actions of the shown page
+--   R0: AP's one-line SPD 0 button in the gap between R2 and R3
 --   bottom row: B1 MENU, B2-B4 the three formats programmed on this MFD
 --               (the lit one is shown), B5 SWAP
 -- Pressing an unlit format button shows that format; pressing the lit one (or
@@ -39,6 +40,9 @@ function M.layout(w, h)
     osb["L" .. i] = { x = 1, y = y, w = sw, h = sh }
     osb["R" .. i] = { x = w - sw + 1, y = y, w = sw, h = sh }
   end
+  -- The central gap in the right column holds AP's one-line speed-zero
+  -- button without moving or removing any of the four speed-step buttons.
+  osb.R0 = { x = w - sw + 1, y = osb.R3.y - 1, w = sw, h = 1 }
   local content = { x = sw + 2, y = bh + 2, w = w - 2 * sw - 2, h = h - 2 * bh - 2 }
   return { osb = osb, content = content, w = w, h = h }
 end

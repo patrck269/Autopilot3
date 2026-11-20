@@ -4,7 +4,7 @@ local M = {}
 M.HELP = {
   "alt <Y>     target altitude (world Y)",
   "brg <deg>   target bearing (0=N 90=E)",
-  "spd <m/s>   target speed (0-35)",
+  "spd <m/s>   target speed (-35 to 35; negative backs up)",
   "hover       hold altitude, stop, hold heading",
   "cruise      altitude + bearing + speed",
   "stby        autopilot off (lift left as is)",

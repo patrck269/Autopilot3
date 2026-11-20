@@ -177,6 +177,8 @@ M.AP = {
     b.L4 = step_button("ALT\n-10", "alt_step", -10)
     b.R1 = step_button("SPD\n+5", "spd_step", 5)
     b.R2 = step_button("SPD\n+1", "spd_step", 1)
+    b.R0 = { label = "SPD 0", lit = ctx.st and ctx.st.tgt and ctx.st.tgt.spd == 0,
+      action = function(x) x.send("spd", 0) end }
     b.R3 = step_button("SPD\n-1", "spd_step", -1)
     b.R4 = step_button("SPD\n-5", "spd_step", -5)
     return b

@@ -325,7 +325,38 @@ local function both_script()
   check(w.cmd.thrust_port == w.cmd.thrust_stbd, "pushers equal", w.cmd.thrust_port .. "/" .. w.cmd.thrust_stbd)
   dump("cruise")
 
-  press("monitor_7", "B4") -- ENG, CAL, SYS -> SYS
+  type_line("rcs off")
+  sleep(2)
+  check(w.cmd.thrust_port > 0 and w.cmd.thrust_stbd > 0, "RCS off keeps nonzero CRUISE propulsion")
+  type_line("hover")
+  sleep(4)
+  check(w.cmd.thrust_port == 0 and w.cmd.thrust_stbd == 0, "RCS off releases station-keeping pushers")
+  check(math.abs(w.y - 210) < 2, "RCS-off handoff keeps altitude hold")
+  type_line("rcs on")
+  sleep(3)
+  check(w.cmd.thrust_port < 0 and w.cmd.thrust_stbd < 0, "RCS on resumes fore/aft braking")
+
+  press("monitor_5", "B3") -- AP
+  check(shows("monitor_5", "AUTOPILOT") and shows("monitor_5", "SPD 0"), "AP shows speed zero beside the speed steps")
+  type_line("spd -5")
+  type_line("cruise")
+  sleep(25)
+  local a = math.rad(w.psi)
+  local reverse_speed = w.vx * math.sin(a) - w.vz * math.cos(a)
+  check(math.abs(reverse_speed + 5) < 1, "typed negative speed cruises astern", string.format("%.2f m/s", reverse_speed))
+  press("monitor_7", "B1") -- MENU
+  press("monitor_7", "T2") -- AP on the narrow display; ENG moves to monitor_5
+  check(shows("monitor_7", "AUTOPILOT") and shows("monitor_7", "SPD 0"), "narrow AP displays the speed-zero button")
+  dump("reverse AP")
+  press("monitor_7", "R0")
+  sleep(20)
+  local stopped = math.sqrt(w.vx * w.vx + w.vz * w.vz)
+  check(stopped < 0.8 and w.cmd.thrust_port == 0 and w.cmd.thrust_stbd == 0,
+    "AP speed-zero button stops reverse travel and rests pushers", string.format("%.2f m/s", stopped))
+  check(math.abs(w.y - 210) < 2, "AP speed-zero preserves altitude hold")
+  dump("AP speed zero")
+
+  press("monitor_7", "B4") -- AP, CAL, SYS -> SYS
   check(shows("monitor_7", "SYSTEM"), "monitor_7 shows SYS")
   press("monitor_7", "T3") -- DEBUG (arm)
   check(shows("monitor_7", "CONF") and not shows("monitor_6", " DEBUG "), "first DEBUG press only arms")

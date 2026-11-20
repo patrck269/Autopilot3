@@ -1,5 +1,5 @@
--- Forward speed control on the rear thrusters (positive RPM pushes forward,
--- negative RPM is reverse thrust and is used to slow down).
+-- Signed forward-speed control on the rear thrusters: positive RPM pushes
+-- forward; negative RPM brakes forward motion or drives the hull astern.
 --
 -- A speed reference ramps from the current speed to the target at a rate that
 -- arrives in ramp_time seconds (inside the 15 s requirement); the controller
@@ -28,6 +28,7 @@ function M.new(cfg, saved)
   return setmetatable({
     c = c,
     A = A,
+    write_rate = cfg.actuator.slew.thrust / cfg.actuator.min_interval.thrust,
     Dn = Dn,
     est = rls.new({ A, Dn }, { 4, 4 }, 0.98),
     target = 0,
@@ -62,15 +63,20 @@ function M:reset(v_now)
   self.v_ref = v_now
   self.integ = 0
   self.pitch_hold = false
+  self.held_f, self.resting, self.saturated = nil, false, 0
   self:set_target(self.target, v_now)
 end
 
 function M:set_target(target, v_now)
   -- Thrust is only rewritten about once a second, so the reference stops
   -- cap_margin short of the hard cap to keep the overshoot under it.
-  self.target = util.clamp(target or 0, 0, self.c.max - self.c.cap_margin)
+  local limit = self.c.max - self.c.cap_margin
+  self.target = util.clamp(target or 0, -limit, limit)
   local gap = math.abs(self.target - self.v_ref)
-  self.rate = math.max(gap / self.c.ramp_time, self.c.min_ramp)
+  -- A stop must finish braking, not merely finish the reference ramp.
+  local duration = self.target == 0 and math.max(self.c.ramp_time - self.c.thrust_lag, self.c.thrust_lag)
+    or self.c.ramp_time
+  self.rate = math.max(gap / duration, self.c.min_ramp)
 end
 
 -- Learn A and D from 0.5 s windows of measured acceleration.
@@ -104,7 +110,13 @@ end
 function M:command(s, dt, cap, applied_rpm, pending)
   local c = self.c
   local v = s.v_fwd
-  local coming = self.A * (pending or 0) * c.thrust_lag
+  local applied_f = util.ssq(applied_rpm or 0) / (cap * cap)
+  local prop_f = applied_f - (pending or 0)
+  -- Include the impulse left while paced writes ramp the motor to zero.
+  -- RPM ramps linearly, so its squared force averages one third of full.
+  local horizon = math.max(c.thrust_lag, math.abs(applied_rpm or 0) / (3 * self.write_rate))
+  local coming = self.A * (pending or 0) * horizon
+  local net_accel = self.A * prop_f - self:drag(v)
 
   local before = self.v_ref
   if not self.pitch_hold then
@@ -112,7 +124,8 @@ function M:command(s, dt, cap, applied_rpm, pending)
   end
   self.a_ref = (self.v_ref - before) / dt
 
-  local err = self.v_ref - v - coming
+  local ahead = util.approach(self.v_ref, self.target, self.rate * horizon)
+  local err = ahead - v - net_accel * horizon - coming
   local grow = c.int_gain * err * dt
   if not self.held_f and not (self.saturated ~= 0 and util.sign(grow) == self.saturated) then
     self.integ = util.clamp(self.integ + grow, -c.int_limit, c.int_limit)
@@ -121,9 +134,8 @@ function M:command(s, dt, cap, applied_rpm, pending)
   -- Preview the end of the ramp: the pushers need paced writes to shed the
   -- acceleration thrust, so asking for it until arrival guarantees overshoot.
   local feed = self.a_ref
-  if c.thrust_lag > 0 then
-    local ahead = util.approach(self.v_ref, self.target, self.rate * c.thrust_lag)
-    feed = self.pitch_hold and 0 or (ahead - self.v_ref) / c.thrust_lag
+  if horizon > 0 then
+    feed = self.pitch_hold and 0 or (ahead - self.v_ref) / horizon
   end
   local accel = feed + c.vel_gain * err + self.integ
   local f = (accel + self:drag(v)) / self.A
@@ -136,7 +148,6 @@ function M:command(s, dt, cap, applied_rpm, pending)
   -- reverse thrust raising it) toward the limit holds the thrust back: past
   -- the limit (with a pitch-rate lead) thrust is cut in proportion to the
   -- excess; until the nose is a degree back inside the limit it may not grow.
-  local applied_f = util.ssq(applied_rpm or 0) / (cap * cap)
   local dir = util.sign(f)
   if dir == 0 then dir = util.sign(applied_f) end
   local dip = -s.pitch * dir
@@ -174,9 +185,8 @@ function M:command(s, dt, cap, applied_rpm, pending)
   -- hold_release, so the pushers are not rewritten every loop.
   -- Passing through the target while still accelerating is not settled.
   -- Use the force already at the props to preview capture and release.
-  local net_accel = self.A * (applied_f - (pending or 0)) - self:drag(v)
-  local projected = v + net_accel * c.thrust_lag
-  if self.target > 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold then
+  local projected = v + net_accel * horizon
+  if self.target ~= 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold then
     if self.held_f then
       if math.max(math.abs(v - self.target), math.abs(projected - self.target)) > c.hold_release then
         self.held_f = nil
@@ -194,7 +204,7 @@ function M:command(s, dt, cap, applied_rpm, pending)
   if self.pitch_hold then
     self.phase = "PITCH"
   elseif math.abs(self.v_ref - self.target) > 0.01 then
-    self.phase = self.target > self.v_ref and "ACCEL" or "DECEL"
+    self.phase = self.target * self.v_ref >= 0 and math.abs(self.target) > math.abs(self.v_ref) and "ACCEL" or "DECEL"
   else
     self.phase = "HOLD"
   end

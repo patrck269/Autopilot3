@@ -48,7 +48,7 @@ function M:observe(s, thrust, sway, now)
   self.win = { t0 = now, vx = s.vx, vy = s.vy, vz = s.vz, f = 0, sw = 0, v1 = 0, v2 = 0, n = 0 }
 
   local mf, msw = w.f / w.n, w.sw / w.n
-  if math.abs(mf) < 0.05 and math.abs(msw) < 0.05 then return end
+  if math.abs(mf) < 0.05 and math.abs(msw) < 0.0125 then return end
   local aw = { x = (s.vx - w.vx) / span, y = (s.vy - w.vy) / span, z = (s.vz - w.vz) / span }
   local a1, a2 = self.tel.plane(util.rotate_inv(s.q, aw))
   self.fit[1]:update({ mf, msw, -w.v1 / w.n }, a1)
