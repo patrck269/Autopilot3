@@ -508,7 +508,7 @@ do
   local layout = { bow_port = "electric_motor_6", bow_stbd = "electric_motor_1",
     stern_port = "electric_motor_0", stern_stbd = "electric_motor_4" }
   local sim = plant.new({ y = 150, lift = 900,
-    saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 1.6, rcs_cap = 4000, rcs_map = layout } })
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 1.6, rcs_cap = 2000, rcs_map = layout } })
   local ok = sim.ap:command({ c = "rcs_reset" }, sim.s)
   local saved = sim.ap:saved()
   check(ok and math.abs(sim.ap.hdg:authority() - CFG.heading.yaw_authority) < 1e-9 and saved.yaw_b == nil,

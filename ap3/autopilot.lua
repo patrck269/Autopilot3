@@ -265,10 +265,7 @@ function M:step(s, now, dt, bank)
   end
 
   self:put_lift(out, self.alt:command(s, self.tgt.alt, dt, self.caps.lift_bow_port), s, dt)
-  -- Until the bow axis is confirmed, a wrong axis turns every speed
-  -- correction the wrong way: keep the pushers to probe_force of full force.
-  local f_max = (self.motion.frame_ok or self.bow_learned) and 1 or cfg.speed.probe_force
-  local T = self.spd:command(s, dt, thr_cap, thr_applied, f_max)
+  local T = self.spd:command(s, dt, thr_cap, thr_applied)
   out.thrust_port, out.thrust_stbd = T, T
   local deadzone = self.mode == "HOVER" and cfg.heading.hover_deadzone or cfg.heading.cruise_deadzone
   -- Until the frame is confirmed (or learned), a wrong axis would make the

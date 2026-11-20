@@ -67,7 +67,9 @@ The fixes were:
 
 **Next time:** when a limit changes, list every quantity expressed as "share of full", and every absolute rate that does not scale with it.
 
-Still open: from a plain hover, cruise overshoots by 1.7–3.1 m/s. The fix is a lead term in the speed loop for force that is still spinning up, the same way the heading loop handles it.
+The caps were later reverted to 2750 / 2000 / 1500 on request, which also reverted that retune.
+
+Still open: from a plain hover, cruise overshoots its target. With the doubled caps that was 1.7–3.1 m/s; with the old caps it is 1.0–1.9 m/s (peaks 21.6–21.9 at 20 m/s, 31.0 at 30 m/s). The fix is a lead term in the speed loop for force that is still spinning up, the same way the heading loop handles it.
 
 ## 6. Feedback needs the right frame, and paired actuators need paired values
 

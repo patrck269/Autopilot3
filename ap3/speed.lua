@@ -99,10 +99,8 @@ function M:observe(s, applied_f, now)
   self.A, self.Dn = t[1], t[2]
 end
 
--- Pusher RPM for this step. applied_rpm is what the motors have now; f_max
--- (default 1) limits the force to that share of full.
-function M:command(s, dt, cap, applied_rpm, f_max)
-  f_max = f_max or 1
+-- Rear thruster RPM for this step. applied_rpm is what the controller has now.
+function M:command(s, dt, cap, applied_rpm)
   local c = self.c
   local v = s.v_fwd
 
@@ -119,16 +117,10 @@ function M:command(s, dt, cap, applied_rpm, f_max)
   end
 
   local accel = self.a_ref + c.vel_gain * err + self.integ
-  self.saturated = 0
-  -- The pushers can give far more than a comfortable acceleration, and their
-  -- props take seconds to spin up or down: a correction past max_accel on
-  -- top of the ramp would overshoot on force still on its way.
-  local hi, lo = self.a_ref + c.max_accel, self.a_ref - c.max_accel
-  if accel > hi then accel = hi; self.saturated = 1 end
-  if accel < lo then accel = lo; self.saturated = -1 end
   local f = (accel + self:drag(v)) / self.A
-  if f > f_max then f = f_max; self.saturated = 1 end
-  if f < -f_max then f = -f_max; self.saturated = -1 end
+  self.saturated = 0
+  if f > 1 then f = 1; self.saturated = 1 end
+  if f < -1 then f = -1; self.saturated = -1 end
 
   -- Pitch protection: thrust along the hull pitches the nose when the line of
   -- thrust misses the centre of mass. Forward thrust dipping the nose (or
@@ -175,7 +167,7 @@ function M:command(s, dt, cap, applied_rpm, f_max)
     if self.held_f then
       if math.abs(v - self.target) > c.hold_release then self.held_f = nil else f = self.held_f end
     elseif math.abs(v - self.target) < c.hold_band then
-      self.held_f = util.clamp((self:drag(self.target) + self.integ) / self.A, -f_max, f_max)
+      self.held_f = util.clamp((self:drag(self.target) + self.integ) / self.A, -1, 1)
       f = self.held_f
     end
   else

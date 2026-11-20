@@ -47,16 +47,14 @@ function M:observe(s, thrust, sway, now)
   if span < 0.5 then return end
   self.win = { t0 = now, vx = s.vx, vy = s.vy, vz = s.vz, f = 0, sw = 0, v1 = 0, v2 = 0, n = 0 }
 
-  -- Forces are shares of full (RPM^2 / cap^2); with 3000/4000 RPM caps,
-  -- 0.025 is the force 750/1000 RPM makes.
   local mf, msw = w.f / w.n, w.sw / w.n
-  if math.abs(mf) < 0.0125 and math.abs(msw) < 0.0125 then return end
+  if math.abs(mf) < 0.05 and math.abs(msw) < 0.05 then return end
   local aw = { x = (s.vx - w.vx) / span, y = (s.vy - w.vy) / span, z = (s.vz - w.vz) / span }
   local a1, a2 = self.tel.plane(util.rotate_inv(s.q, aw))
   self.fit[1]:update({ mf, msw, -w.v1 / w.n }, a1)
   self.fit[2]:update({ mf, msw, -w.v2 / w.n }, a2)
   local c = self.cfg.frame
-  if math.abs(mf) >= 0.025 then
+  if math.abs(mf) >= 0.1 then
     self.n_thrust = self.n_thrust + 1
     -- Thrust pushes toward the bow.
     self:vote("thrust", self.fit[1].t[1], self.fit[2].t[1], self.n_thrust, c.bow_min_accel)
