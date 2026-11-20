@@ -678,13 +678,15 @@ print("33. NAV HOLD: a nearby point is reached by translation, not by turning")
 do
   local sim = nav_hull()
   sim.cmd("goto", { x = 10, z = -6, y = 200, brg = 0 })
-  local worst_hdg, late_d, t0 = 0, 0, sim.w.t
+  local worst_hdg, late_d, t0, top = 0, 0, sim.w.t, 0
   sim.run(60, function(s2, s)
     worst_hdg = math.max(worst_hdg, math.abs(util.wrap180(s.hdg)))
+    top = math.max(top, s.y)
     if s2.w.t - t0 > 40 then late_d = math.max(late_d, flat(s2, 10, -6)) end
   end)
   check(late_d <= 2, "within 2 blocks for the last 20 s", string.format("worst %.2f", late_d))
   check(worst_hdg <= 10, "heading never more than 10 deg from 0", string.format("worst %.2f", worst_hdg))
+  check(top < 202, "a translated stop does not climb to the transit floor", string.format("top %.2f", top))
   check(sim.ap.nav.phase == "ARRIVED", "phase ARRIVED", tostring(sim.ap.nav.phase))
 end
 
@@ -716,18 +718,20 @@ local function fly_nav(sim, seconds, hook)
   return arrived
 end
 
-print("35. goto with a final bearing: climb first, hold, turn")
+local FLOOR = CFG.nav.min_transit_alt
+
+print("35. goto with a final bearing: climb above " .. FLOOR .. " first, descend over the point, turn")
 do
   local sim = nav_hull()
   sim.cmd("goto", { x = 400, z = 300, y = 230, brg = 270 })
   local min_y, left_climb = math.huge, false
-  local arrived = fly_nav(sim, 300, function(s2, s)
+  local arrived = fly_nav(sim, 400, function(s2, s)
     local phase = s2.ap.nav.phase
     if phase ~= "CLIMB" then left_climb = true end
-    if left_climb and phase ~= "ARRIVED" then min_y = math.min(min_y, s.y) end
+    if left_climb and flat(s2, 400, 300) > 3 then min_y = math.min(min_y, s.y) end
   end)
-  check(min_y >= 228.5, "flies at 230 once out of CLIMB", string.format("min %.2f", min_y))
-  check(arrived ~= nil, "ARRIVED within 300 s", tostring(arrived))
+  check(min_y >= FLOOR - 1.5, "cruises at " .. FLOOR .. " until over the point", string.format("min %.2f", min_y))
+  check(arrived ~= nil, "ARRIVED within 400 s", tostring(arrived))
   local worst_d, worst_h, worst_y = 0, 0, 0
   sim.run(20, function(s2, s)
     worst_d = math.max(worst_d, flat(s2, 400, 300))
@@ -745,11 +749,12 @@ print("36. goto lower: descend last")
 do
   local sim = nav_hull(250)
   sim.cmd("goto", { x = 300, z = 0, y = 180, brg = 90 })
-  local min_far = math.huge
-  local arrived = fly_nav(sim, 300, function(s2, s)
-    if flat(s2, 300, 0) > 3 then min_far = math.min(min_far, s.y) end
+  local min_far, left_climb = math.huge, false
+  local arrived = fly_nav(sim, 400, function(s2, s)
+    if s2.ap.nav.phase ~= "CLIMB" then left_climb = true end
+    if left_climb and flat(s2, 300, 0) > 3 then min_far = math.min(min_far, s.y) end
   end)
-  check(min_far >= 248, "stays up while more than 3 blocks out", string.format("min %.2f", min_far))
+  check(min_far >= FLOOR - 2, "stays at " .. FLOOR .. " while more than 3 blocks out", string.format("min %.2f", min_far))
   check(arrived ~= nil and math.abs(sim.s.y - 180) <= 1.0, "ends at Y 180",
     string.format("y %.2f, arrived %s", sim.s.y, tostring(arrived)))
 end
@@ -760,16 +765,19 @@ do
   sim.cmd("route_add", { x = 200, z = 0 })
   sim.cmd("route_add", { x = 200, z = 200, y = 200, brg = 180 })
   sim.cmd("route_go")
-  local closest, gs_there = math.huge, 0
-  local arrived = fly_nav(sim, 300, function(s2, s)
+  local closest, gs_there, low = math.huge, 0, math.huge
+  local arrived = fly_nav(sim, 400, function(s2, s)
     local d = flat(s2, 200, 0)
     if d < closest then closest, gs_there = d, math.sqrt(s2.w.vx ^ 2 + s2.w.vz ^ 2) end
+    if s2.ap.nav.phase == "TRANSIT" then low = math.min(low, s.y) end
   end)
   check(gs_there >= 5, "does not stop at the fly-through waypoint",
     string.format("%.2f m/s at %.1f blocks", gs_there, closest))
-  check(arrived ~= nil and flat(sim, 200, 200) <= 2 and math.abs(util.wrap180(sim.s.hdg - 180)) <= 2,
-    "ARRIVED at the last leg, bearing 180",
-    string.format("d %.2f hdg %.2f arrived %s", flat(sim, 200, 200), sim.s.hdg, tostring(arrived)))
+  check(low >= FLOOR - 1.5, "both legs cruise at " .. FLOOR, string.format("min %.2f", low))
+  check(arrived ~= nil and flat(sim, 200, 200) <= 2 and math.abs(util.wrap180(sim.s.hdg - 180)) <= 2
+    and math.abs(sim.s.y - 200) <= 1.0,
+    "ARRIVED at the last leg, bearing 180, back down at Y 200",
+    string.format("d %.2f hdg %.2f y %.2f arrived %s", flat(sim, 200, 200), sim.s.hdg, sim.s.y, tostring(arrived)))
 end
 
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))

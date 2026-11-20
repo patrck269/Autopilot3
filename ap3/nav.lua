@@ -3,10 +3,12 @@
 --
 -- A leg is { x =, z =, y = nil|n, brg = nil|n, name = nil|s }. A stop is a
 -- leg with a bearing, and always the last leg; any other leg is flown
--- through. y = nil keeps the altitude.
+-- through. y = nil sets no altitude for the leg.
 --
--- Each leg climbs first and descends last: the ship flies at the higher of
--- its altitude and the leg's, and only descends once over a stop.
+-- Each leg climbs first and descends last: the ship cruises at the highest
+-- of its altitude, the leg's and min_transit_alt (out of reach of ground
+-- fire), and only descends to a stop's Y once over it. A stop without Y is
+-- held at the transit altitude.
 --   CLIMB    to the transit altitude, turning toward the point, no speed
 --   TRANSIT  bow on the point; speed brakes along sqrt(2 a d) to the next stop
 --   HOLD     at a stop: translate fore/aft (pushers) and sideways (RCS)
@@ -178,6 +180,7 @@ function M:begin_leg(s)
       self.i = self.i + 1
     else
       self.phase = "CLIMB"
+      self.transit_alt = math.max(self.transit_alt, c.min_transit_alt)
       return
     end
   end

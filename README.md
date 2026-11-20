@@ -83,7 +83,7 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 | `salvo 1` (`3`, `5`, `10`, `all`) | BOMB: 1 3 5 10 ALL | Bombs per drop |
 | `drop` | BOMB: DROP | Drop one salvo (see Bomb bay) |
 | `reload` | BOMB: RELOAD then CONF RELOAD | Mark every bomb loaded again |
-| `goto X Z [Y] [BRG]` / `goto <name>` | — | NAV to a world point (see Navigation). Without Y the altitude is kept; with BRG the ship turns to it there |
+| `goto X Z [Y] [BRG]` / `goto <name>` | — | NAV to a world point (see Navigation). It cruises at Y 500 or higher and descends to Y over the point; without Y it stays at the cruise altitude. With BRG the ship turns to it there |
 | `wp save <name>` / `wp del <name>` / `wp list` | — | Named waypoints: the current position, altitude and heading (up to 30, saved in `/ap3_nav.dat`) |
 | `route add X Z [Y] [BRG]` / `route add <name>` | — | Append a leg to the stored route (up to 20). A leg with BRG is a stop; others are flown through |
 | `route go` / `route clear` / `route list` | NAV: NAV GO, CLR ROUTE then CONF CLEAR | Fly the stored route (it is kept), empty it, or show it |
@@ -95,7 +95,7 @@ Type `help` for the list. If the computer reboots while the lift is spinning, it
 
 `goto` and `route go` fly in NAV mode. They need RCS on, the ship in the air and a confirmed bow axis (cruise forward once on a new hull). While NAV flies, `alt`, `brg` and `sync` are refused; `hover` (or any other mode) takes over and ends NAV, and `rcs off` drops it to HOVER.
 
-Each leg climbs first and descends last. The ship flies at the higher of its altitude and the leg's, and only descends once it is within 3 blocks of a stop.
+Each leg climbs first and descends last. The ship cruises at the highest of its altitude, the leg's Y and Y 500 (`nav.min_transit_alt`, above the reach of ground Warium fire), and only descends to a stop's Y once it is within 3 blocks of it. A stop without Y is held at the cruise altitude.
 
 | Phase | What happens |
 |---|---|
@@ -104,7 +104,7 @@ Each leg climbs first and descends last. The ship flies at the higher of its alt
 | HOLD | Inside 8 blocks of a stop: hold position by translating, without turning. The pushers move the hull fore/aft (up to 4 m/s), the RCS sideways (up to 2 m/s). Hold drives back toward the point beyond 1.5 blocks and rests inside 0.75 blocks. The ship then descends and turns to the stop's bearing. Settled for 3 s, the next leg starts |
 | ARRIVED | The last stop is reached; the ship keeps holding there |
 
-A stop closer than 24 blocks when its leg starts is reached in HOLD alone, sideways or backwards if need be. A stop without a bearing keeps the heading the ship had when it got there. The last leg of a route is always a stop.
+A stop closer than 24 blocks when its leg starts is reached in HOLD alone, sideways or backwards if need be, without the climb to Y 500 (that is not a cruise). A stop without a bearing keeps the heading the ship had when it got there. The last leg of a route is always a stop.
 
 ## Flight recorder
 
@@ -218,4 +218,4 @@ python tests/cc/run.py <CraftOS-PC_console.exe>
 
 `tests/test_telemetry.lua` checks stationary readings despite an accumulating physics velocity, signed and diagonal displacement, irregular sample times, bow changes and clock resets.
 
-`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path. Its `velocity` scenario holds the world position still while the velocity API increases, then moves forward, reverses and stops; the rendered PFD/AP/HSI readouts must follow world movement rather than that API. Its `nav` scenario saves a waypoint, flies `goto` 40 blocks east to bearing 90 until MENU → NAV shows ARRIVED, and records 3 s with `rec on`/`rec off`.
+`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path. Its `velocity` scenario holds the world position still while the velocity API increases, then moves forward, reverses and stops; the rendered PFD/AP/HSI readouts must follow world movement rather than that API. Its `nav` scenario saves a waypoint, flies `goto` 40 blocks east to bearing 90 (up to Y 500 and back down to 200) until MENU → NAV shows ARRIVED, and records 3 s with `rec on`/`rec off`.

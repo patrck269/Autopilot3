@@ -462,12 +462,15 @@ local function nav_script()
   press("monitor_7", "B1") -- MENU
   press("monitor_7", "T4") -- the fourth page: NAV
   check(shows("monitor_7", "LEG 1/1"), "MENU -> NAV shows the active leg")
-  local t0, arrived = os.clock(), nil
-  while os.clock() - t0 < 120 do
+  -- Up to the transit floor (min_transit_alt), 40 blocks east, back down to 200.
+  local t0, arrived, top = os.clock(), nil, 0
+  while os.clock() - t0 < 300 do
+    top = math.max(top, w.y)
     if shows("monitor_7", "ARRIVED") then arrived = os.clock() - t0; break end
     sleep(0.5)
   end
-  check(arrived ~= nil, "NAV page shows ARRIVED within 120 s", tostring(arrived))
+  check(arrived ~= nil, "NAV page shows ARRIVED within 300 s", tostring(arrived))
+  check(top >= cfg.nav.min_transit_alt - 2, "climbed to the transit floor on the way", string.format("top %.1f", top))
   local d = math.sqrt((w.x - tx) ^ 2 + (w.z - tz) ^ 2)
   local herr = math.abs(((w.psi - 90 + 180) % 360) - 180)
   check(d <= 2, "holds within 2 blocks of the point", string.format("%.2f blocks", d))

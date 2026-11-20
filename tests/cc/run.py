@@ -27,7 +27,7 @@ def run(exe: str, scenario: str) -> bool:
     try:
         proc = subprocess.run(
             [exe, "--headless", "--directory", str(data), "--id", "5"],
-            capture_output=True, text=True, timeout=400,
+            capture_output=True, text=True, timeout=700,
             cwd=str(pathlib.Path(exe).parent),
         )
         out = proc.stdout

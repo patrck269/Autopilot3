@@ -57,11 +57,15 @@ local r = cfg.nav.translate_radius
 n:start({ { x = r - 4, z = 0 } }, s)
 A.eq(n.phase, "HOLD", "a stop " .. (r - 4) .. " blocks away is translated to")
 A.eq(n.hold_brg, 0, "without a bearing the stop keeps the current heading")
+A.eq(n.transit_alt, 200, "a translated stop keeps the current altitude (no climb to the floor)")
 n:start({ { x = r + 6, z = 0, brg = 90 } }, s)
 A.eq(n.phase, "CLIMB", "a stop " .. (r + 6) .. " blocks away is flown to")
-A.eq(n.transit_alt, 200, "transit altitude starts at the current altitude")
-n:start({ { x = 5, z = 0 }, { x = 400, z = 0, y = 260 } }, s)
+local floor = cfg.nav.min_transit_alt
+A.eq(n.transit_alt, floor, "transit is raised to min_transit_alt")
+n:start({ { x = 5, z = 0 }, { x = 400, z = 0, y = floor + 60 } }, s)
 A.eq(n.i, 2, "a fly-through leg already inside pass_radius is skipped")
-A.eq(n.transit_alt, 260, "climb first: the transit altitude is the higher one")
+A.eq(n.transit_alt, floor + 60, "climb first: the transit altitude is the highest one")
+n:start({ { x = 400, z = 0, brg = 90 } }, { x = 0, z = 0, y = floor + 100, hdg = 0 })
+A.eq(n.transit_alt, floor + 100, "already above the floor: transit stays at the current altitude")
 
 print("ALL NAV CHECKS PASSED")

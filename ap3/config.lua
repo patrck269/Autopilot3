@@ -149,6 +149,7 @@ return {
   nav = {
     speed = 25,            -- default transit speed, m/s ('spd' changes it while NAV flies)
     min_speed = 5,         -- slowest transit speed 'spd' may set
+    min_transit_alt = 500, -- CLIMB and TRANSIT fly at least this high (ground Warium fire); a stop's Y is reached over the point
     brake_accel = 0.5,     -- planned deceleration approaching a stop, m/s^2
     stop_margin = 4,       -- blocks short of a stop where the transit profile reaches 0
     align_deg = 20,        -- no forward speed while the bow is further than this off the course
