@@ -118,6 +118,7 @@ function M.run(cfg, opts)
         phase = ap.nav.phase,
         last = ap.nav.last,
         speed = ap.nav.speed,
+        docking = ap.nav.docking,
         points = names,
         route_n = #ap.nav.route,
       },

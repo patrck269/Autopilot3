@@ -361,6 +361,67 @@ M.NAV = {
   end,
 }
 
+------------------------------------------------------------------ DOCK
+local DOCK_STEPS = { 1, 2, 5, 10 }
+
+M.DOCK = {
+  id = "DOCK", title = "Docking: move N blocks, turn N degrees",
+  osb = function(ctx)
+    local step = ctx.dock_step or 1
+    local b = {}
+    for i, n in ipairs(DOCK_STEPS) do
+      b["T" .. i] = { label = "STEP\n" .. n, lit = step == n, action = function(x) x.dock_step = n end }
+    end
+    b.T5 = { label = "HOLD\nHERE", action = function(x) x.send("dock", { move = "here" }) end }
+    local function move(label, m, n)
+      return { label = label, action = function(x) x.send("dock", { move = m, n = n }) end }
+    end
+    b.L1 = move("FWD\n" .. step, "fwd", step)
+    b.L2 = move("AFT\n" .. step, "aft", step)
+    b.L3 = move("PORT\n" .. step, "port", step)
+    b.L4 = move("STBD\n" .. step, "stbd", step)
+    b.R1 = move("UP\n" .. step, "up", step)
+    b.R2 = move("DOWN\n" .. step, "down", step)
+    b.R3 = move("BRG\n-" .. step, "turn", -step)
+    b.R4 = move("BRG\n+" .. step, "turn", step)
+    return b
+  end,
+  draw = function(c, a, ctx)
+    header(c, a, "DOCK", ctx)
+    if no_data(c, a, ctx) then return end
+    local st, s = ctx.st, ctx.st.s
+    local nav = st.nav or {}
+    local l = nav.last
+    local lines = { { "STEP " .. (ctx.dock_step or 1) .. " blocks / deg", colors.yellow } }
+    local holding = st.mode == "NAV" and l and (nav.phase == "HOLD" or nav.phase == "ARRIVED") and l.i == l.n
+    if holding then
+      lines[#lines + 1] = { (nav.docking and "DOCK HOLD " or "NAV HOLD ") .. tostring(nav.phase),
+        nav.phase == "ARRIVED" and colors.lime or colors.orange }
+      lines[#lines + 1] = { "POINT FWD " .. fmt(l.along, 1) .. "  STBD " .. fmt(l.side, 1) .. "  DIST " .. fmt(l.d, 1),
+        colors.white }
+    elseif st.mode == "NAV" then
+      lines[#lines + 1] = { "NAV FLYING: MOVES WAIT FOR ARRIVED", colors.orange }
+    elseif st.mode == "HOVER" then
+      lines[#lines + 1] = { "HOVER: A MOVE HOLDS FROM HERE", colors.lightGray }
+    else
+      lines[#lines + 1] = { "MOVES NEED HOVER OR A NAV HOLD", colors.red }
+    end
+    lines[#lines + 1] = { "Y " .. fmt(s.y, 1) .. " -> " .. fmt(st.tgt.alt, 0), colors.white }
+    lines[#lines + 1] = { "HDG " .. fmt(s.hdg, 1) .. " -> " .. compass(st.tgt.brg), colors.white }
+    lines[#lines + 1] = { "GS " .. fmt(s.gs, 2) .. "  DRIFT " .. fmt(s.v_side, 2), colors.lightGray }
+    local y = a.y + 2
+    for _, ln in ipairs(lines) do
+      for _, part in ipairs(wrap(ln[1], a.w)) do
+        if y < a.y + a.h - 1 then
+          c:write(a.x, y, part, ln[2])
+          y = y + 1
+        end
+      end
+    end
+    if ctx.reply then c:write(a.x, a.y + a.h - 1, ctx.reply, colors.lightGray) end
+  end,
+}
+
 ------------------------------------------------------------------ ENG
 local SHORT = {
   lift_bow_port = "LFT BP", lift_bow_stbd = "LFT BS", lift_stern_port = "LFT SP", lift_stern_stbd = "LFT SS",
@@ -697,6 +758,6 @@ M.UFC = {
   end,
 }
 
-M.LIST = { M.PFD, M.AP, M.HSI, M.NAV, M.ENG, M.BOMB, M.CAL, M.SYS, M.UFC }
+M.LIST = { M.PFD, M.AP, M.HSI, M.NAV, M.DOCK, M.ENG, M.BOMB, M.CAL, M.SYS, M.UFC }
 
 return M

@@ -490,6 +490,22 @@ local function nav_script()
   end
   check(header == require("ap3.recorder").HEADER, "recording has the CSV header", tostring(header))
   check(rows >= 10, "3 s of recording holds at least 10 rows", rows .. " rows")
+
+  -- DOCK page: STEP 5, then STBD 5. Facing east, starboard is +Z.
+  press("monitor_7", "B1") -- MENU
+  press("monitor_7", "T5") -- the fifth page: DOCK
+  sleep(0.5)
+  check(shows("monitor_7", "NAV HOLD ARRIVED"), "MENU -> DOCK shows the NAV hold it moves from")
+  press("monitor_7", "T3") -- STEP 5
+  check(shows("monitor_7", "STEP 5 blocks"), "STEP 5 is selected")
+  press("monitor_7", "L4") -- STBD 5
+  sleep(1)
+  check(shows("monitor_7", "dock stbd 5") and shows("monitor_7", "DOCK HOLD"), "STBD 5 is accepted and becomes a dock hold",
+    screen("monitor_7"):match("dock[^\n]*"))
+  sleep(40)
+  local dd = math.sqrt((w.x - tx) ^ 2 + (w.z - (tz + 5)) ^ 2)
+  check(dd <= 2, "the ship holds 5 blocks to starboard", string.format("%.2f blocks off", dd))
+  dump("dock stbd 5")
 end
 
 local scripts = { both = both_script, missing = missing_script, velocity = velocity_script, nav = nav_script }

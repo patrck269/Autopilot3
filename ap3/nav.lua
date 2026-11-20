@@ -191,12 +191,33 @@ function M:start(list, s)
   self.active = list
   self.i = 1
   self.hold_on = false
+  self.docking = false
   self:begin_leg(s)
+end
+
+-- Docking: hold at leg by translation alone, however far it is (no climb
+-- to the transit floor, no transit).
+function M:dock(leg, s)
+  self.active, self.i = { leg }, 1
+  self.transit_alt = math.max(util.round(s.y), leg.y or -math.huge)
+  self:enter_hold(leg, s)
+  self.docking = true
+end
+
+-- The point a docking move starts from while the last leg is held (its
+-- position, altitude and bearing), else nil.
+function M:hold_point()
+  if self.active and (self.phase == "HOLD" or self.phase == "ARRIVED") and self.i == #self.active then
+    local leg = self.active[self.i]
+    return { x = leg.x, z = leg.z, y = leg.y, brg = self.hold_brg }
+  end
+  return nil
 end
 
 function M:stop()
   self.active, self.i, self.phase, self.last = nil, nil, nil, nil
   self.settled_since = nil
+  self.docking = false
 end
 
 -- Remaining distance: to leg i, then along the legs up to the next stop.

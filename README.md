@@ -88,6 +88,7 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 | `route add X Z [Y] [BRG]` / `route add <name>` | — | Append a leg to the stored route (up to 20). A leg with BRG is a stop; others are flown through |
 | `route go` / `route clear` / `route list` | NAV: NAV GO, CLR ROUTE then CONF CLEAR | Fly the stored route (it is kept), empty it, or show it |
 | `rec on` / `rec off` | — | Flight recorder (see Flight recorder) |
+| `dock fwd 5` (`aft`, `port`, `stbd`, `up`, `down`), `dock turn -10`, `dock here` | DOCK: STEP 1/2/5/10, FWD/AFT/PORT/STBD, UP/DOWN, BRG −/+, HOLD HERE | Docking: hold a point N blocks along one ship axis, or turn N degrees in place (see Docking) |
 
 Type `help` for the list. If the computer reboots while the lift is spinning, it takes over in HOVER at the current altitude (NAV never resumes on its own).
 
@@ -105,6 +106,15 @@ Each leg climbs first and descends last. The ship cruises at the highest of its 
 | ARRIVED | The last stop is reached; the ship keeps holding there |
 
 A stop closer than 24 blocks when its leg starts is reached in HOLD alone, sideways or backwards if need be, without the climb to Y 500 (that is not a cruise). A stop without a bearing keeps the heading the ship had when it got there. The last leg of a route is always a stop.
+
+### Docking
+
+The DOCK page (through MENU) moves the held point by the selected step: 1, 2, 5 or 10. FWD, AFT, PORT and STBD move it that many blocks along the ship's bow or beam, taken from the bearing being held, not the momentary heading. UP and DOWN move it that many blocks in Y. BRG − and BRG + turn the held bearing that many degrees, in place. HOLD HERE holds the current position. The same moves are typed as `dock fwd 5`, `dock turn -10` or `dock here`.
+
+- **Where a move starts:** in HOVER, from the current position, target altitude and bearing. In a NAV hold (HOLD or ARRIVED at the last leg), from the held point, so repeated presses add up exactly: three FWD 10 presses hold 30 blocks ahead.
+- **How it flies:** the new point is held in NAV by translation alone, however far it is: no climb to Y 500 and no turn toward it. A lower Y is reached once within 3 blocks of the point.
+- **Refused:** in CRUISE, STBY and other modes, and while NAV is still climbing or in transit.
+- **Precision:** position hold rests within 0.75 blocks of the point and drives back once the hull drifts past 1.5 blocks, so a 1-block step moves the hull, but it settles within that band.
 
 ## Flight recorder
 
@@ -150,6 +160,7 @@ At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4
 | AP | Mode, every target against its actual value, bearing error, speed reference, hover RPM here and at the target, alerts |
 | HSI | Heading-up compass rose with bearing bug, track and (in NAV) a `W` toward the point, ground speed, drift, X/Z position |
 | NAV | Leg, phase, the point (name or X,Z), its altitude and bearing, distance, bearing to it and ETA, the HOLD fore/aft and sideways offsets, NAV speed, route length and waypoint names. HOVR/CRZ/STBY, NAV GO (fly the route), CLR ROUTE then CONF CLEAR, SPD ±5. Reached through MENU |
+| DOCK | Step size, the held point's offset ahead and to starboard, distance, altitude and heading against target, ground speed and drift. STEP 1/2/5/10, HOLD HERE, FWD/AFT/PORT/STBD, UP/DOWN, BRG −/+ by the step. Reached through MENU |
 | ENG | Each motor's applied and desired RPM against its cap. Red: missing. A red bar: the last write failed |
 | BOMB | Bay map (bow on the left, starboard row on top): lime loaded, yellow in the next salvo, gray used, red relay missing. Bombs loaded, salvo size, doors and how long they have been open, the reason the next drop would be refused or READY. Salvo size, DOOR, DROP and RELOAD buttons |
 | CAL | Ground or airborne, sample count, hover RPM here and at target, air density, lift constant, altitude trim, mass, level trim, learned thrust and drag, learned RCS turning and sideways strength, bow axis (learned or config). RECAL and RCS RESET |
@@ -206,9 +217,9 @@ lua tests/test_nav.lua
 python tests/cc/run.py <CraftOS-PC_console.exe>
 ```
 
-`tests/test_flight.lua` flies the real control modules against `tests/world.lua`, a hull model with the Clockwork thrust law per motor, air density, drag, RCS yaw, thrust misalignment, nose dip, corner lift torque, an off-centre load, prop lag and ground contact. It checks liftoff, climbing and holding at several heights from wrong calibrations, cruise to 30 m/s within 15 s, the 35 m/s cap, reverse-thrust braking, heading hold, the pitch limit, KILL and DEBUG on all ten motors, noisy telemetry, a wrong bow axis, wrong RCS labels with the RCS check, levelling under an off-centre load, and paired pushers. Cases 31–37 check the closed-loop altitude band with noisy velocity, the pusher-calibration floor, NAV HOLD translating onto a nearby point without turning, a 180° turn under the 15°/s cap, `goto` climbing first and ending at its bearing, descending last, and a route through a fly-through waypoint.
+`tests/test_flight.lua` flies the real control modules against `tests/world.lua`, a hull model with the Clockwork thrust law per motor, air density, drag, RCS yaw, thrust misalignment, nose dip, corner lift torque, an off-centre load, prop lag and ground contact. It checks liftoff, climbing and holding at several heights from wrong calibrations, cruise to 30 m/s within 15 s, the 35 m/s cap, reverse-thrust braking, heading hold, the pitch limit, KILL and DEBUG on all ten motors, noisy telemetry, a wrong bow axis, wrong RCS labels with the RCS check, levelling under an off-centre load, and paired pushers. Cases 31–37 check the closed-loop altitude band with noisy velocity, the pusher-calibration floor, NAV HOLD translating onto a nearby point without turning, a 180° turn under the 15°/s cap, `goto` climbing first and ending at its bearing, descending last, a route through a fly-through waypoint, and docking moves (fore, starboard, up, a 90° turn in place, and three 10-block presses adding up without a climb).
 
-`tests/test_nav.lua` checks the `goto`/`wp`/`route`/`rec` parser, waypoint-name rules, loading a saved waypoint file with bad entries, and which phase a leg starts in.
+`tests/test_nav.lua` checks the `goto`/`wp`/`route`/`rec`/`dock` parser, waypoint-name rules, loading a saved waypoint file with bad entries, and which phase a leg starts in.
 
 `tests/test_install.lua` checks that the installer downloads every module `startup.lua` can load. `tests/test_bombs.lua` checks the bay layout, salvo selection, the interlocks, the trigger pulse and door timing, and the bay wrapper (save before fire, bad save files, a missing door relay, salvo sizes). `tests/test_mfd.lua` checks that every display keeps three different formats and every page is on screen at most once, whatever is pressed or loaded.
 
@@ -218,4 +229,4 @@ python tests/cc/run.py <CraftOS-PC_console.exe>
 
 `tests/test_telemetry.lua` checks stationary readings despite an accumulating physics velocity, signed and diagonal displacement, irregular sample times, bow changes and clock resets.
 
-`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path. Its `velocity` scenario holds the world position still while the velocity API increases, then moves forward, reverses and stops; the rendered PFD/AP/HSI readouts must follow world movement rather than that API. Its `nav` scenario saves a waypoint, flies `goto` 40 blocks east to bearing 90 (up to Y 500 and back down to 200) until MENU → NAV shows ARRIVED, and records 3 s with `rec on`/`rec off`.
+`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path. Its `velocity` scenario holds the world position still while the velocity API increases, then moves forward, reverses and stops; the rendered PFD/AP/HSI readouts must follow world movement rather than that API. Its `nav` scenario saves a waypoint, flies `goto` 40 blocks east to bearing 90 (up to Y 500 and back down to 200) until MENU → NAV shows ARRIVED, records 3 s with `rec on`/`rec off`, then on MENU → DOCK picks STEP 5 and STBD 5 and checks the ship holds 5 blocks to starboard.

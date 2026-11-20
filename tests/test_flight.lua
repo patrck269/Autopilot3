@@ -780,5 +780,55 @@ do
     string.format("d %.2f hdg %.2f y %.2f arrived %s", flat(sim, 200, 200), sim.s.hdg, sim.s.y, tostring(arrived)))
 end
 
+print("38. Docking moves: N blocks along one ship axis, N degrees of bearing")
+do
+  local sim = nav_hull()
+  local function dock(move, n)
+    local ok, msg = sim.ap:command({ c = "dock", v = { move = move, n = n } }, sim.s)
+    assert(ok, msg)
+  end
+  -- Worst distance from (x, z) and altitude error over the last 10 s of t s.
+  local function settle(t, x, z, y)
+    local d, e, t0 = 0, 0, sim.w.t
+    sim.run(t, function(s2, s)
+      if s2.w.t - t0 > t - 10 then
+        d = math.max(d, flat(s2, x, z))
+        e = math.max(e, math.abs(s.y - y))
+      end
+    end)
+    return d, e
+  end
+  local x0, z0 = sim.w.x, sim.w.z
+  dock("fwd", 5) -- heading north: 5 blocks toward -Z
+  local d, e = settle(40, x0, z0 - 5, 200)
+  check(d <= 2 and e <= 1, "FWD 5 holds 5 blocks north", string.format("off %.2f, y err %.2f", d, e))
+  dock("stbd", 2)
+  d = settle(40, x0 + 2, z0 - 5, 200)
+  check(d <= 2, "STBD 2 then holds 2 blocks east", string.format("off %.2f", d))
+  dock("up", 5)
+  d, e = settle(30, x0 + 2, z0 - 5, 205)
+  check(e <= 1 and d <= 2, "UP 5 holds 5 blocks higher in place", string.format("y err %.2f off %.2f", e, d))
+  dock("turn", 90)
+  local worst_d = 0
+  sim.run(60, function(s2) worst_d = math.max(worst_d, flat(s2, x0 + 2, z0 - 5)) end)
+  check(math.abs(util.wrap180(sim.s.hdg - 90)) <= HDG_HOVER and worst_d <= 2,
+    "BRG +90 turns in place", string.format("hdg %.1f, worst off %.2f", sim.s.hdg, worst_d))
+  dock("fwd", 10) -- now facing east
+  dock("fwd", 10)
+  dock("fwd", 10)
+  local top = 0
+  sim.run(120, function(_, s) top = math.max(top, s.y) end)
+  check(sim.ap.nav.phase == "ARRIVED" and flat(sim, x0 + 32, z0 - 5) <= 2,
+    "three FWD 10 presses add up to 30 blocks east",
+    string.format("%s, off %.2f", tostring(sim.ap.nav.phase), flat(sim, x0 + 32, z0 - 5)))
+  check(top < 207, "docking never climbs to the transit floor", string.format("top %.2f", top))
+  local ok = sim.ap:command({ c = "dock", v = { move = "fwd", n = 0 } }, sim.s)
+  check(not ok, "a zero move is refused")
+  sim.cmd("spd", 10)
+  sim.cmd("mode", "CRUISE")
+  ok = sim.ap:command({ c = "dock", v = { move = "fwd", n = 1 } }, sim.s)
+  check(not ok, "docking moves are refused in CRUISE")
+end
+
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
 os.exit(failures == 0 and 0 or 1)

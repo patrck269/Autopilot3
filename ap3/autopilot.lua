@@ -102,27 +102,80 @@ function M:engage(mode, s)
   self:log("MODE " .. mode)
 end
 
--- Start NAV on list (legs). Returns ok, message.
-function M:start_nav(list, s)
+-- Start NAV on list (legs), or with dock = true hold list[1] by translation
+-- alone. Returns ok, message.
+function M:start_nav(list, s, dock)
   if self.rcs_off then return false, "rcs is off: type 'rcs on' first" end
   if self.alt.grounded then return false, "lift off first: hover, then goto" end
   if not (self.motion.frame_ok or self.bow_learned) then
     return false, "nav needs a confirmed bow axis: cruise forward until it is confirmed"
   end
   if s == nil then return false, "no telemetry" end
-  self.nav:start(list, s)
+  if dock then
+    self.nav:dock(list[1], s)
+  else
+    self.nav:start(list, s)
+  end
   self:engage("NAV", s)
-  self:log("NAV LEG 1/" .. #list)
+  if not dock then self:log("NAV LEG 1/" .. #list) end
   return true, "nav: leg 1/" .. #list
 end
 
 local NAV_LOCKED = { alt = true, alt_step = true, brg = true, brg_step = true, sync = true }
 
+-- Docking moves: ship-relative, from the bearing being held.
+local DOCK_MOVES = { fwd = true, aft = true, port = true, stbd = true, up = true, down = true, turn = true, here = true }
+M.DOCK_USAGE = "dock fwd|aft|port|stbd|up|down <blocks> | dock turn <deg> | dock here"
+
+-- One docking move { move =, n = }. Holds the new point in NAV by
+-- translation alone. Returns ok, message.
+function M:dock(v, s)
+  if type(v) ~= "table" or not DOCK_MOVES[v.move] then return false, M.DOCK_USAGE end
+  local m, n = v.move, v.n
+  if m == "turn" then
+    if not util.finite(n) or n == 0 or math.abs(n) > 180 then return false, "dock turn: -180 to 180 degrees" end
+  elseif m ~= "here" then
+    if not util.finite(n) or n <= 0 or n > 50 then return false, "dock moves: 1 to 50 blocks" end
+  end
+  local p
+  if self.mode == "NAV" then
+    p = self.nav:hold_point()
+    if not p then return false, "NAV is flying: wait for ARRIVED or type hover" end
+  elseif self.mode ~= "HOVER" then
+    return false, "dock moves need HOVER or a NAV hold"
+  end
+  if s == nil then return false, "no telemetry" end
+  if not p or m == "here" then
+    p = { x = s.x, z = s.z, y = self.tgt.alt, brg = self.tgt.brg or util.round(s.hdg) % 360 }
+  end
+  p.y = p.y or self.tgt.alt or util.round(s.y)
+  local b = math.rad(p.brg)
+  local fx, fz, rx, rz = math.sin(b), -math.cos(b), math.cos(b), math.sin(b)
+  if m == "fwd" then p.x, p.z = p.x + n * fx, p.z + n * fz
+  elseif m == "aft" then p.x, p.z = p.x - n * fx, p.z - n * fz
+  elseif m == "stbd" then p.x, p.z = p.x + n * rx, p.z + n * rz
+  elseif m == "port" then p.x, p.z = p.x - n * rx, p.z - n * rz
+  elseif m == "up" then p.y = p.y + n
+  elseif m == "down" then p.y = p.y - n
+  elseif m == "turn" then p.brg = (p.brg + n) % 360
+  end
+  p.y = util.clamp(p.y, -64, 2000)
+  p.name = "dock"
+  local ok, text = self:start_nav({ p }, s, true)
+  if not ok then return ok, text end
+  local label = m == "here" and "HERE" or (m:upper() .. " " .. util.fmt(n))
+  self:log("DOCK " .. label)
+  return true, string.format("dock %s: X %s Z %s Y %s BRG %s", label:lower(), util.fmt(p.x, 1), util.fmt(p.z, 1),
+    util.fmt(p.y, 0), util.compass(p.brg))
+end
+
 -- Waypoint and route commands. Returns ok, message, or nil when c is not one.
 function M:nav_command(c, v, s)
   local n = self.nav
   local nc = self.cfg.nav
-  if c == "goto" then
+  if c == "dock" then
+    return self:dock(v, s)
+  elseif c == "goto" then
     local leg, err = n:resolve(v)
     if not leg then return false, err end
     return self:start_nav({ leg }, s)

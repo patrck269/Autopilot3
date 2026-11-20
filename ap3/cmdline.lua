@@ -26,6 +26,7 @@ M.HELP = {
   "route add X Z [Y] [BRG]|<name>  add a leg (BRG = stop)",
   "route go|clear|list  fly / empty / show the route",
   "rec on|off  flight recorder (/ap3_rec.csv)",
+  "dock fwd|aft|port|stbd|up|down N, dock turn N, dock here",
 }
 
 local MODES = { hover = "HOVER", h = "HOVER", cruise = "CRUISE", c = "CRUISE", stby = "STBY", standby = "STBY", off = "STBY", kill = "KILL", debug = "DEBUG" }
@@ -93,6 +94,13 @@ function M.parse(line)
   if head == "rec" then
     if words[2] == "on" or words[2] == "off" then return { c = "rec_" .. words[2] } end
     return nil, "rec on | rec off"
+  end
+  if head == "dock" then
+    local move, n = words[2], tonumber(words[3])
+    if move == "here" and words[3] == nil then return { c = "dock", v = { move = "here" } } end
+    local moves = { fwd = true, aft = true, port = true, stbd = true, up = true, down = true, turn = true }
+    if moves[move] and n ~= nil and words[4] == nil then return { c = "dock", v = { move = move, n = n } } end
+    return nil, "dock fwd|aft|port|stbd|up|down <blocks> | dock turn <deg> | dock here"
   end
   if head == "doors" then
     if words[2] == "open" or words[2] == "close" then return { c = "doors", v = words[2] } end
