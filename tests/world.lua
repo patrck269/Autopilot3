@@ -88,6 +88,7 @@ function W.new(motors, opts, gravity)
     vx = 0, vy = 0, vz = 0,
     psi = opts.psi or 0, r = 0, theta = 0, q = 0, phi = 0, pr = 0,
     rpm = {}, cmd = {}, writes = 0,
+    flick = {}, peak = {}, -- Create flicker score of each motor's prop bearing
     devices = {},
     ticks = 0, lonely = 0, lonely_run = 0, lonely_max = 0, -- RCS corner pulling without its diagonal partner
     split_run = 0, pusher_split_max = 0, -- the two pushers set to different RPM
@@ -100,12 +101,25 @@ function W.new(motors, opts, gravity)
   local k_lift = gravity / (sea * p.hover_rpm_sea ^ 2)
   local k_thrust = p.thrust_full / (sea * 1500 ^ 2)
 
+  -- GeneratingKineticBlockEntity.applyNewSpeed detaches and reattaches the
+  -- network. Budget 5 flicker points per downstream stop/start transition:
+  -- up to 10 per running-speed change, including the prop bearing.
+  -- The score drops 1 a tick; a bearing past 128 is destroyed. Starting
+  -- from or stopping at 0 is one transition, otherwise budget two.
+  local function bump(id, from, to)
+    local n = (from == 0 or to == 0) and 5 or 10
+    w.flick[id] = w.flick[id] + n
+    if w.flick[id] > w.peak[id] then w.peak[id] = w.flick[id] end
+  end
+
   for id, c in pairs(motors) do
     local start = 0
     if LIFT_SET[id] and opts.lift then start = opts.lift end
     if opts.rpm and opts.rpm[id] then start = opts.rpm[id] end
     w.rpm[id] = start
     w.cmd[id] = start
+    w.flick[id] = 0
+    w.peak[id] = 0
     w.devices[id] = {
       setSpeed = function(v)
         assert(type(v) == "number", "setSpeed expects a number")
@@ -113,11 +127,21 @@ function W.new(motors, opts, gravity)
         assert(math.abs(v) <= c.cap, id .. " over cap: " .. v)
         -- The lift and RCS props only ever pull: positive RPM (or 0).
         if not PUSHERS[id] then assert(v >= 0, id .. " given negative RPM: " .. v) end
+        if v ~= w.cmd[id] then bump(id, w.cmd[id], v) end
         w.cmd[id] = v
         w.writes = w.writes + 1
       end,
       getSpeed = function() return w.cmd[id] end,
     }
+  end
+
+  -- Highest flicker score any bearing reached, and which.
+  function w.peak_flicker()
+    local m, at = 0, nil
+    for id, v in pairs(w.peak) do
+      if v > m then m, at = v, id end
+    end
+    return m, at
   end
 
   w.ship = {
@@ -145,6 +169,7 @@ function W.new(motors, opts, gravity)
     for id, v in pairs(w.cmd) do
       -- PropellerBearingBlockEntity.tick: omega += clamp((target - omega) / 2, +-32 RPM)
       w.rpm[id] = w.rpm[id] + math.max(-p.prop_slew, math.min(p.prop_slew, (v - w.rpm[id]) / 2))
+      w.flick[id] = math.max(0, w.flick[id] - 1)
     end
     w.ticks = w.ticks + 1
     local alone = false

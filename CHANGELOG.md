@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Anticipate pending pusher force and taper acceleration before the speed ramp ends. Cruise hold now checks projected speed and freezes its integral instead of capturing an accelerating pass through the target.
+- Enforce each motor's write interval within coordinated batches and measure it from call completion. A due motor no longer forces recently written partners to update; KILL still bypasses pacing. Adjust the yaw lead to the enforced cadence.
+- Invert bomb-door output: powered closes, unpowered opens. Startup closes the doors without firing any bomb triggers; manual and timed closing use the same polarity.
+- Add motor-cadence, bearing-flicker, cruise-arrival and door-polarity regressions.
+
 ## 3.1.0
 
 Rebuilt on the Autopilot 2.0 codebase. This replaces the 1.0-derived modes and UI.

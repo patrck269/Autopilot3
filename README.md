@@ -21,7 +21,7 @@ Needs CC: Tweaked and CC:VS (`ship` and `aero` APIs). Everything runs on one com
 
 | Relay | Role |
 |---|---|
-| `redstone_relay_59` | Bomb bay doors. Every side on opens them |
+| `redstone_relay_59` | Bomb bay doors. Every side on closes them; off opens them |
 | `redstone_relay_13` to `redstone_relay_58` | One bomb each. Every side is pulsed to drop it |
 
 Each motor gets its own RPM, and the motors draw no rotational load from a shared engine. Names, caps, and a per-motor `sign` flip are in `ap3/config.lua`, along with the relay prefix. The MFDs use every attached monitor (`monitors = {}`); list monitor names there to use only some.
@@ -38,7 +38,7 @@ The installer looks up the latest commit, downloads every file from that exact c
 
 ## Start-up checks
 
-At start-up the flight loop checks the ship API, a wired modem, and all ten motors. Anything missing is listed on the terminal and on every MFD. Nothing is written to the motors until the list is clear; the flight loop then starts on its own as soon as the missing device is attached. Missing bomb relays are only warnings: the ship still flies, and drops are refused while the door relay is missing. On start the flight loop switches every relay output off.
+At start-up the flight loop checks the ship API, a wired modem, and all ten motors. Anything missing is listed on the terminal and on every MFD. Nothing is written to the motors until the list is clear; the flight loop then starts on its own as soon as the missing device is attached. Missing bomb relays are only warnings: the ship still flies, and drops are refused while the door relay is missing. On start the flight loop switches bomb triggers off and the door relay on to close the doors.
 
 ## DEBUG direction check
 
@@ -129,7 +129,7 @@ At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4
 
 **Levelling.** The collective lift is spread over the four corners: bow port `L·(1+P−R)`, bow starboard `L·(1+P+R)`, stern port `L·(1−P−R)`, stern starboard `L·(1−P+R)`. `P` and `R` come from a PD loop on pitch and roll (positive pitch is nose up, positive roll is starboard down) plus an integral trim, up to 30% of `L`, that learns an off-centre load such as a half-empty bomb bay. CAL shows the trims. Levelling waits until the bow axis is confirmed, because with `frame.forward` wrong it would tip the hull further.
 
-**Speed.** The speed reference ramps to the target in 12 s and stops 0.5 m/s under the 35 m/s cap. Both pushers always get the same RPM. Control uses normalised force (`RPM²`) with acceleration and drag learned in flight. Slowing down uses negative RPM on the pushers. If acceleration pitches the nose past `pitch_limit` (6°), thrust is held back and the ramp pauses until the nose recovers. Once at cruise speed (within 0.3 m/s), the pusher thrust is held at the RPM that balances drag and only recomputed if the speed drifts 1 m/s. Stopped (HOVER), the pushers rest until drift passes 0.8 m/s, brake it under 0.2 m/s, and rest again.
+**Speed.** The speed reference ramps to the target in 12 s and stops 0.5 m/s under the 35 m/s cap. Both pushers always get the same RPM. Control uses normalised force (`RPM²`) with acceleration and drag learned in flight. A one-second preview tapers acceleration before the ramp ends and accounts for force still arriving as the props spin up. Slowing down uses negative RPM on the pushers. If acceleration pitches the nose past `pitch_limit` (6°), thrust is held back and the ramp pauses until the nose recovers. Cruise thrust is held only when both measured and projected speed are within 0.3 m/s of target, and released if either drifts 1 m/s. The integral freezes while thrust is held. Stopped (HOVER), the pushers rest until drift passes 0.8 m/s, brake it under 0.2 m/s, and rest again.
 
 **Heading and sideslip.** The RCS only pulls; no motor ever reverses. For a turn force `u` and a sideways force `s`, each corner gets `max(0, …)` of: bow starboard `u+s`, stern port `u−s`, bow port `−u−s`, stern starboard `s−u`. A pure turn is a diagonal pair (right: bow starboard + stern port; left: bow port + stern starboard), a pure strafe is a same-side pair (both starboard corners pull to starboard), and blends stay proportional. One corner on its own mostly strafes the hull, because the Eureka helm's stabilisation resists the turn.
 
@@ -142,9 +142,11 @@ Clockwork props don't follow the motor at once: the bearing changes spin by at m
 **Motor pacing.** `setSpeed` runs on the server thread and stalls for a tick, so the flight loop only records the RPM each motor should have, and a writer task sends at most one write per tick:
 
 - each motor is written at most once a second. Changes under 5 RPM (lift), 15 (pushers) and 100 (RCS) are skipped, but a start or a stop is always written. One write changes a motor by at most 300 RPM (lift), 400 (pushers) or 1000 (RCS). Sign reversals pass through 0
-- the motors move in groups: the four lift corners, the four RCS corners and the two pushers. A group is written as one batch, motors turning down first, then motors turning up, on consecutive ticks with the values chosen when the batch started. So the pushers never differ for more than a tick and an RCS corner never pulls without its diagonal partner
+- the motors move in groups: the four lift corners, the four RCS corners and the two pushers. A group is written as one batch, motors turning down first, then motors turning up, on consecutive ticks with the values chosen when the batch started. Each member must be eligible in its planned tick slot before the batch starts, and its interval is checked again at the write. A due motor cannot pull a recently written partner into another update. Intervals run from the completion of each yielding call
 - a running batch goes first, then the lift, then the group with the largest need
 - KILL bypasses all of it: every motor goes to 0 at once
+
+Changing an electric motor's speed detaches and reattaches its kinetic network. Downstream bearings still incur Create's flicker score: a running-speed change adds up to 10, it decays by 1 per game tick, and scores above 128 destroy blocks. Normal one-second pacing prevents our writes from accumulating that score. This does not protect against independent power starvation or redstone cycling: an underfed motor can stop and restart even with its commanded RPM unchanged. Check power delivery if bearings still stutter or break.
 
 ## Limits
 
@@ -157,6 +159,7 @@ Clockwork props don't follow the motor at once: the bearing changes spin by at m
 
 ```
 lua tests/test_flight.lua
+lua tests/test_actuators.lua
 lua tests/test_install.lua
 lua tests/test_bombs.lua
 lua tests/test_mfd.lua
@@ -166,5 +169,7 @@ python tests/cc/run.py <CraftOS-PC_console.exe>
 `tests/test_flight.lua` flies the real control modules against `tests/world.lua`, a hull model with the Clockwork thrust law per motor, air density, drag, RCS yaw, thrust misalignment, nose dip, corner lift torque, an off-centre load, prop lag and ground contact. It checks liftoff, climbing and holding at several heights from wrong calibrations, cruise to 30 m/s within 15 s, the 35 m/s cap, reverse-thrust braking, heading hold, the pitch limit, KILL and DEBUG on all ten motors, noisy telemetry, a wrong bow axis, wrong RCS labels with the RCS check, levelling under an off-centre load, and paired pushers.
 
 `tests/test_install.lua` checks that the installer downloads every module `startup.lua` can load. `tests/test_bombs.lua` checks the bay layout, salvo selection, the interlocks, the trigger pulse and door timing, and the bay wrapper (save before fire, bad save files, a missing door relay, salvo sizes). `tests/test_mfd.lua` checks that every display keeps three different formats and every page is on screen at most once, whatever is pressed or loaded.
+
+`tests/test_actuators.lua` checks staggered batch eligibility, pinned targets, per-motor write intervals under rapid requests, downstream bearing flicker, paired pushers, completion-time pacing, and emergency zero interrupting a batch. Flight checks include plain-hover starts to 20 and 30 m/s with less than 1 m/s overshoot in the simulated hull.
 
 `tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path.

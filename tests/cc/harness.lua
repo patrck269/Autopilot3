@@ -280,7 +280,7 @@ local function both_script()
   check(shows("monitor_5", "BOMB BAY"), "monitor_5 back on BOMB")
   type_line("doors open")
   sleep(4) -- doors settle
-  check(#changes(59, true) > 0, "doors relay 59 switched on")
+  check(#changes(59, false) > 0, "doors relay 59 switched off to open")
   type_line("drop")
   sleep(0.6)
   check(shows("monitor_5", "below 200"), "drop at Y 120 refused: below 200")
@@ -304,7 +304,7 @@ local function both_script()
   check(shows("monitor_5", "LOADED 45/46"), "BOMB shows 45/46 loaded")
   check(fs.exists("/ap3_bombs.dat"), "used bombs saved")
   sleep(11)
-  local closed = changes(59, false, door_mark + 1)
+  local closed = changes(59, true, door_mark + 1)
   local close_after = (#closed > 0 and #off > 0) and (closed[1] - off[1]) or -1
   check(close_after > 9 and close_after < 11.5, "doors close about 10 s after the pulse",
     string.format("%.2f s", close_after))

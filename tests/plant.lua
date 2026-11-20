@@ -29,7 +29,7 @@ function P.new(opts)
   for id, c in pairs(cfg.motors) do devices[id] = byname[c.name] end
 
   local tel = telemetry.new(cfg, { ship = w.ship, aero = w.aero, clock = function() return w.t end })
-  local bank = actuators.new(cfg, devices)
+  local bank = actuators.new(cfg, devices, function() return w.t end)
   bank:seed()
   local ap = autopilot.new(cfg, opts.saved, tel.rho_at(62), tel)
   local sim = { w = w, p = w.p, cfg = cfg, ap = ap, bank = bank, tel = tel }

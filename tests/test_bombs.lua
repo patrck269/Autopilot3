@@ -59,7 +59,8 @@ local log, relays = {}, {}
 for id = 13, 59 do relays[id] = relay(id, log) end
 local b = bombs.new()
 A.eq(bombs.check(b, 0, 250, true, cfg), "doors closed", "closed check")
-bombs.open_doors(b, 0, relays[59])
+bombs.open_doors(b, 0, relays[59], cfg)
+for _, event in ipairs(log) do A.eq(event.value, false, "door open removes signal") end
 A.eq(bombs.check(b, 1, 250, true, cfg), "doors opening 2s", "settle check")
 A.eq(bombs.check(b, 3, 199.5, true, cfg), "below 200 (Y 199)", "altitude check")
 A.eq(bombs.check(b, 3, 200, true, cfg), nil, "minimum altitude")
@@ -82,6 +83,7 @@ A.eq(#log, 12, "six trigger sides off")
 for index = 7, 12 do A.eq(log[index].value, false, "trigger off") end
 bombs.update(b, 15.5, relays, relays[59], cfg)
 A.eq(b.doors_open, false, "doors auto-close")
+for index = 13, 18 do A.eq(log[index].value, true, "auto-close applies signal") end
 
 b = bombs.new()
 b.doors_open, b.opened_at = true, -3
@@ -121,6 +123,20 @@ local function bay_world(opts)
   local bay = bombbay.new(CFG, P, store)
   bay:scan()
   return bay, calls, files
+end
+
+do
+  local bay, calls = bay_world()
+  bay:safe()
+  for _, event in ipairs(calls) do
+    A.eq(event.value, event.id == 59, "startup closes doors without firing bombs")
+  end
+  local before = #calls
+  bay:command("doors", "open", { y = 250 }, 0)
+  for i = before + 1, #calls do A.eq(calls[i].value, false, "manual open removes signal") end
+  before = #calls
+  bay:command("doors", "close", { y = 250 }, 4)
+  for i = before + 1, #calls do A.eq(calls[i].value, true, "manual close applies signal") end
 end
 
 do

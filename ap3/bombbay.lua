@@ -67,13 +67,16 @@ function M:scan()
   self.preview_key = nil
 end
 
--- Every output of every relay off: no trigger or door left on by a restart.
+-- Every trigger off and the doors closed: nothing left firing or open by a
+-- restart.
 function M:safe()
+  local closed = bombs.door_signal(self.cfg, false)
   for id = FIRST, self.cfg.door_relay do
     local r = self.relays[id]
     if r then
+      local value = id == self.cfg.door_relay and closed or false
       for _, side in ipairs({ "top", "bottom", "left", "right", "front", "back" }) do
-        pcall(r.setOutput, side, false)
+        pcall(r.setOutput, side, value)
       end
     end
   end
@@ -90,10 +93,10 @@ function M:command(c, v, s, now)
   if c == "doors" then
     if v == "open" then
       if not door then return false, "doors relay missing" end
-      bombs.open_doors(b, now, door)
+      bombs.open_doors(b, now, door, cfg)
       return true, "doors open"
     elseif v == "close" then
-      local ok, reason = bombs.close_doors(b, door)
+      local ok, reason = bombs.close_doors(b, door, cfg)
       if not ok then return false, reason end
       return true, "doors closed"
     end

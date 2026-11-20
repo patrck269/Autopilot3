@@ -265,7 +265,8 @@ function M:step(s, now, dt, bank)
   end
 
   self:put_lift(out, self.alt:command(s, self.tgt.alt, dt, self.caps.lift_bow_port), s, dt)
-  local T = self.spd:command(s, dt, thr_cap, thr_applied)
+  local pending = util.ssq(thr_applied) / (thr_cap * thr_cap) - thr_f
+  local T = self.spd:command(s, dt, thr_cap, thr_applied, pending)
   out.thrust_port, out.thrust_stbd = T, T
   local deadzone = self.mode == "HOVER" and cfg.heading.hover_deadzone or cfg.heading.cruise_deadzone
   -- Until the frame is confirmed (or learned), a wrong axis would make the

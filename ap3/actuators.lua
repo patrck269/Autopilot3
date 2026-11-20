@@ -61,9 +61,10 @@ function M.apply_layout(cfg, map)
 end
 
 -- devices: map channel -> wrapped motor (nil when missing)
-function M.new(cfg, devices)
+function M.new(cfg, devices, clock)
   local self = setmetatable({
     cfg = cfg.actuator,
+    clock = clock or os.clock,
     ch = {},
     urgent = false,
     batch = {}, -- motors still to write in the running group batch
@@ -170,14 +171,15 @@ function M:effective(group, now)
 end
 
 -- Next value to write for channel c, or nil.
--- in_batch: part of a running group batch, so no interval or deadband.
+-- in_batch: candidate for a coordinated batch, so ignore deadband and check
+-- the whole batch's interval eligibility in group_due before starting it.
 function M:next_value(c, now, in_batch)
   if c.desired == nil or c.dev == nil then return nil end
   local have = c.applied
   if self.urgent and c.desired == 0 and have ~= 0 then return 0 end
   local want = c.desired
   if have == want then return nil end
-  if not in_batch and now - c.last_write < self.cfg.min_interval[c.group] then return nil end
+  if not in_batch and now - c.last_write + 1e-6 < self.cfg.min_interval[c.group] then return nil end
   if have == nil then
     -- Unknown motor state (getSpeed failed): write the target as is.
     return want
@@ -199,6 +201,9 @@ local function write(self, c, v, now)
   c.last_write = now
   c.writes = c.writes + 1
   local ok, err = pcall(c.dev.setSpeed, v * c.sign)
+  -- setSpeed yields on the server thread. Pace from completion, not from
+  -- the stale timestamp captured before that yield.
+  c.last_write = math.max(now, self.clock())
   if ok then
     c.applied = v
     c.fault = nil
@@ -210,8 +215,8 @@ local function write(self, c, v, now)
 end
 
 -- The writes for group name to make now, or nil: { id =, v = } for the
--- motors turning down (or, if none, the ones turning up), started only when
--- at least one motor of the group is due (interval and deadband).
+-- motors turning down (or, if none, the ones turning up). Every member must
+-- be ready before any is written, preserving both cadence and paired motion.
 function M:group_due(name, now)
   local due = false
   local down, up = {}, {}
@@ -227,6 +232,12 @@ function M:group_due(name, now)
   if not due then return nil end
   local list = #down > 0 and down or up
   if #list == 0 then return nil end
+  for i, w in ipairs(list) do
+    local c = self.ch[w.id]
+    -- Each peripheral write occupies at least one server tick. Check each
+    -- member's earliest write slot, not all members against the first slot.
+    if now + (i - 1) * 0.05 - c.last_write + 1e-6 < self.cfg.min_interval[name] then return nil end
+  end
   return list
 end
 
@@ -246,9 +257,14 @@ function M:service(now)
   -- A running group batch goes on, one motor per tick, with the values
   -- chosen when it started, so motors that move together stay equal.
   while #self.batch > 0 do
-    local w = table.remove(self.batch, 1)
+    local w = self.batch[1]
     local c = self.ch[w.id]
-    if c.dev and c.desired ~= nil and c.applied ~= w.v then return write(self, c, w.v, now) end
+    if c.dev and c.desired ~= nil and c.applied ~= w.v then
+      if now - c.last_write + 1e-6 < self.cfg.min_interval[c.group] then return nil end
+      table.remove(self.batch, 1)
+      return write(self, c, w.v, now)
+    end
+    table.remove(self.batch, 1)
   end
 
   -- Otherwise the lift, then the largest weighted need.

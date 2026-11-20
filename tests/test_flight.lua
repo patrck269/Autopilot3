@@ -519,5 +519,29 @@ do
   check(saved.rcs_map == layout, "the RCS corner layout is kept")
 end
 
+print("28. Plain hover to cruise: anticipate pusher lag before arrival")
+do
+  for _, target in ipairs({ 20, 30 }) do
+    local sim = plant.new({ y = 200, lift = 900,
+      saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+    sim.cmd("alt", 200)
+    sim.cmd("mode", "HOVER")
+    sim.run(40)
+    sim.cmd("spd", target)
+    sim.cmd("mode", "CRUISE")
+    local start, peak, reached = sim.w.t, 0, nil
+    sim.run(60, function(s2, s)
+      peak = math.max(peak, s.v_fwd)
+      if not reached and math.abs(s.v_fwd - target) < 1 then reached = s2.w.t - start end
+    end)
+    check(peak < target + 1, target .. " m/s overshoot under 1 m/s", string.format("peak %.3f", peak))
+    check(reached ~= nil and reached <= 15, target .. " m/s reached within 15 s", tostring(reached))
+    check(math.abs(sim.s.v_fwd - target) < 1, target .. " m/s held after 60 s",
+      string.format("%.3f", sim.s.v_fwd))
+    local score, id = sim.w.peak_flicker()
+    check(score < 128, "bearing flicker stays below destruction threshold", tostring(id) .. ": " .. score)
+  end
+end
+
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
 os.exit(failures == 0 and 0 or 1)

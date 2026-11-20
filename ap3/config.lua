@@ -91,6 +91,7 @@ return {
     ramp_time = 12,       -- reference reaches the new target in this many s (requirement: within 15 s)
     min_ramp = 0.3,       -- slowest reference ramp, m/s^2
     vel_gain = 0.8,       -- (m/s^2) per m/s of speed error
+    thrust_lag = 1.0,     -- seconds of actuator response anticipated by pending-force and ramp preview
     int_gain = 0.15,      -- integral (m/s^2) per (m/s * s)
     int_limit = 2.0,      -- integral limit, m/s^2
     stop_band = 0.2,      -- stopped: brake drift down to this (m/s), then the pushers rest
@@ -141,7 +142,7 @@ return {
     sway_settle = 0.15,   -- m/s
     sway_guard_time = 10, -- s: if the drift has grown after braking this long, the brake stops
     sway_lag = 1.0,       -- s: drift the props' current spin will still add (they spin down slowly)
-    yaw_lag = 0.8,        -- s: lead on yaw rate for turn force still spinning up or down
+    yaw_lag = 1.0,        -- s: lead on yaw rate, including the enforced per-motor write interval
   },
 
   -- DEBUG mode RPM for every motor (written to the block as is).
@@ -157,13 +158,14 @@ return {
   },
 
   -- Bomb bay: redstone relays prefix..13 to prefix..58 trigger one bomb each
-  -- (every side fired), prefix..59 opens the bay doors. Drops need the doors
+  -- (every side fired), prefix..59 closes the bay doors when powered. Drops need the doors
   -- open for door_settle s, Y >= bomb_min_altitude and bomb_min_interval s
   -- since the last salvo. Triggers pulse for bomb_pulse s; the doors close
   -- door_close_delay s after the pulse ends.
   bombs = {
     relay_prefix = "redstone_relay_",
     door_relay = 59,
+    door_open_signal = false, -- no signal opens; a signal closes the doors
     bomb_min_altitude = 200,
     bomb_min_interval = 5,
     door_settle = 3,

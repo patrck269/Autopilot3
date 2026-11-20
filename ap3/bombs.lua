@@ -6,6 +6,7 @@ local DEFAULTS = {
   door_settle = 3,
   door_close_delay = 10,
   bomb_pulse = 0.5,
+  door_open_signal = false, -- the door relay's output while the doors are open
 }
 
 M.LAYOUT = {}
@@ -212,15 +213,23 @@ function M.drop(b, now, altitude, relays, cfg, before_fire)
   return ids
 end
 
-function M.open_doors(b, now, door)
-  set_all(door, true)
+-- The door relay holds door_open_signal while the doors are open and the
+-- opposite while they are closed (on this ship a redstone signal closes them).
+function M.door_signal(cfg, open)
+  local open_signal = setting(cfg, "door_open_signal")
+  if open then return open_signal end
+  return not open_signal
+end
+
+function M.open_doors(b, now, door, cfg)
+  set_all(door, M.door_signal(cfg, true))
   if not b.doors_open then b.opened_at = now end
   b.doors_open = true
 end
 
-function M.close_doors(b, door)
+function M.close_doors(b, door, cfg)
   if b.pulse ~= nil then return nil, "drop in progress" end
-  set_all(door, false)
+  set_all(door, M.door_signal(cfg, false))
   b.doors_open = false
   b.opened_at = nil
   b.close_at = nil
@@ -234,7 +243,7 @@ function M.update(b, now, relays, door, cfg)
     b.close_at = now + cfg.door_close_delay
   end
   if b.close_at ~= nil and b.pulse == nil and now >= b.close_at then
-    M.close_doors(b, door)
+    M.close_doors(b, door, cfg)
   end
 end
 

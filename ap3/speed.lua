@@ -99,10 +99,12 @@ function M:observe(s, applied_f, now)
   self.A, self.Dn = t[1], t[2]
 end
 
--- Rear thruster RPM for this step. applied_rpm is what the controller has now.
-function M:command(s, dt, cap, applied_rpm)
+-- pending is commanded force minus force already reaching the hull. Account
+-- for the velocity still arriving as the props spin to their motor speeds.
+function M:command(s, dt, cap, applied_rpm, pending)
   local c = self.c
   local v = s.v_fwd
+  local coming = self.A * (pending or 0) * c.thrust_lag
 
   local before = self.v_ref
   if not self.pitch_hold then
@@ -110,13 +112,20 @@ function M:command(s, dt, cap, applied_rpm)
   end
   self.a_ref = (self.v_ref - before) / dt
 
-  local err = self.v_ref - v
+  local err = self.v_ref - v - coming
   local grow = c.int_gain * err * dt
-  if not (self.saturated ~= 0 and util.sign(grow) == self.saturated) then
+  if not self.held_f and not (self.saturated ~= 0 and util.sign(grow) == self.saturated) then
     self.integ = util.clamp(self.integ + grow, -c.int_limit, c.int_limit)
   end
 
-  local accel = self.a_ref + c.vel_gain * err + self.integ
+  -- Preview the end of the ramp: the pushers need paced writes to shed the
+  -- acceleration thrust, so asking for it until arrival guarantees overshoot.
+  local feed = self.a_ref
+  if c.thrust_lag > 0 then
+    local ahead = util.approach(self.v_ref, self.target, self.rate * c.thrust_lag)
+    feed = self.pitch_hold and 0 or (ahead - self.v_ref) / c.thrust_lag
+  end
+  local accel = feed + c.vel_gain * err + self.integ
   local f = (accel + self:drag(v)) / self.A
   self.saturated = 0
   if f > 1 then f = 1; self.saturated = 1 end
@@ -163,10 +172,18 @@ function M:command(s, dt, cap, applied_rpm)
   -- Steady at cruise speed: hold the thrust that balances drag (plus the
   -- learned trim) and stop rewriting it, until the speed drifts past
   -- hold_release, so the pushers are not rewritten every loop.
+  -- Passing through the target while still accelerating is not settled.
+  -- Use the force already at the props to preview capture and release.
+  local net_accel = self.A * (applied_f - (pending or 0)) - self:drag(v)
+  local projected = v + net_accel * c.thrust_lag
   if self.target > 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold then
     if self.held_f then
-      if math.abs(v - self.target) > c.hold_release then self.held_f = nil else f = self.held_f end
-    elseif math.abs(v - self.target) < c.hold_band then
+      if math.max(math.abs(v - self.target), math.abs(projected - self.target)) > c.hold_release then
+        self.held_f = nil
+      else
+        f = self.held_f
+      end
+    elseif math.abs(v - self.target) < c.hold_band and math.abs(projected - self.target) < c.hold_band then
       self.held_f = util.clamp((self:drag(self.target) + self.integ) / self.A, -1, 1)
       f = self.held_f
     end

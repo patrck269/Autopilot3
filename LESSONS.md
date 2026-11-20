@@ -69,7 +69,7 @@ The fixes were:
 
 The caps were later reverted to 2750 / 2000 / 1500 on request, which also reverted that retune.
 
-Still open: from a plain hover, cruise overshoots its target. With the doubled caps that was 1.7–3.1 m/s; with the old caps it is 1.0–1.9 m/s (peaks 21.6–21.9 at 20 m/s, 31.0 at 30 m/s). The fix is a lead term in the speed loop for force that is still spinning up, the same way the heading loop handles it.
+Cruise initially overshot from a plain hover: earlier probes measured 1.0–1.9 m/s at the old caps. Pending-force lead alone did not solve it: the ramp kept requesting acceleration until arrival, and cruise hold captured an accelerating pass through target. The speed loop now previews the ramp end and projected hold speed, compensates for pending propeller force, and freezes the held integral. The 20 and 30 m/s regression scenarios stay below 1 m/s overshoot over 60 seconds on the simulated hull; this is not a live-flight measurement.
 
 ## 6. Feedback needs the right frame, and paired actuators need paired values
 
