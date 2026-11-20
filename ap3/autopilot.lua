@@ -6,6 +6,9 @@
 --   CRUISE  hold target altitude and bearing, fly at target speed (cap 35 m/s,
 --           reached through a ramp that arrives within 15 s), slow down with
 --           reverse thrust, RCS keeps heading and cancels sideslip
+--   NAV     fly to a point or along a route (ap3/nav.lua): climb first,
+--           transit bow-on, translate onto the point, descend last, turn to
+--           the final bearing and hold position there
 --   KILL    every motor to 0 at once; stays until another mode is chosen
 --   DEBUG   every motor at +debug_rpm as written to the block (the
 --           config sign is not applied), to see which way each prop pushes.
@@ -18,17 +21,21 @@ local motion = require("ap3.motion")
 local rcscheck = require("ap3.rcscheck")
 local actuators = require("ap3.actuators")
 local level = require("ap3.level")
+local nav = require("ap3.nav")
 
 local M = {}
 M.__index = M
 
-M.MODES = { STBY = true, HOVER = true, CRUISE = true, KILL = true, DEBUG = true }
+M.MODES = { STBY = true, HOVER = true, CRUISE = true, NAV = true, KILL = true, DEBUG = true }
+-- Modes in which the autopilot flies the hull.
+M.FLYING = { HOVER = true, CRUISE = true, NAV = true }
 local RCS = actuators.GROUPS.rcs
 
 -- saved: prior calibration ({ k =, A =, Dn =, yaw_b =, rcs_cap =, bow = }) or nil.
 -- sea_rho: air density at sea level (seeds the hover guess).
 -- tel: telemetry; the learned bow axis is applied to it.
--- opts: { rcs_off = true while the helm steers (survives a reboot) } or nil.
+-- opts: { rcs_off = true while the helm steers (survives a reboot),
+--         nav = saved waypoints and route } or nil.
 function M.new(cfg, saved, sea_rho, tel, opts)
   if saved and type(saved.bow) == "table" and util.finite(saved.bow.x) then
     tel.set_forward(saved.bow)
@@ -43,6 +50,8 @@ function M.new(cfg, saved, sea_rho, tel, opts)
     hdg = heading.new(cfg, saved),
     motion = motion.new(cfg, tel),
     level = level.new(cfg),
+    nav = nav.new(cfg, opts and opts.nav),
+    sway_target = nil, -- NAV HOLD: sideways velocity target, m/s to starboard
     rcs_off = opts ~= nil and opts.rcs_off == true,
     bow_learned = saved ~= nil and saved.bow ~= nil,
     rcs_map = saved and saved.rcs_map or nil, -- RCS layout from an earlier check (applied at start-up)
@@ -68,31 +77,105 @@ function M:engage(mode, s)
     self.check = nil
     self:log("RCS CHECK STOPPED")
   end
+  if prev == "NAV" and mode ~= "NAV" then
+    if self.nav.active then self:log("NAV ENDED") end
+    self.nav:stop()
+  end
+  self.sway_target = nil
+  self.nav_sent = nil
   -- Learning pauses in KILL and DEBUG; start fresh windows either side.
   self.alt.win, self.spd.win, self.hdg.win, self.motion.win = nil, nil, nil, nil
-  if mode == "HOVER" or mode == "CRUISE" then
+  if M.FLYING[mode] then
     if self.tgt.alt == nil then self.tgt.alt = util.round(s.y) end
     if self.tgt.brg == nil then self.tgt.brg = util.round(s.hdg) % 360 end
-    if prev ~= "HOVER" and prev ~= "CRUISE" then
+    if not M.FLYING[prev] then
       self.hdg:reset()
       self.spd:reset(s.v_fwd)
       self.level:reset()
     end
-    if mode == "HOVER" then
-      self.spd:set_target(0, s.v_fwd)
-    else
+    if mode == "CRUISE" then
       self.spd:set_target(self.tgt.spd, s.v_fwd)
+    else
+      self.spd:set_target(0, s.v_fwd)
     end
   end
   self:log("MODE " .. mode)
 end
 
+-- Start NAV on list (legs). Returns ok, message.
+function M:start_nav(list, s)
+  if self.rcs_off then return false, "rcs is off: type 'rcs on' first" end
+  if self.alt.grounded then return false, "lift off first: hover, then goto" end
+  if not (self.motion.frame_ok or self.bow_learned) then
+    return false, "nav needs a confirmed bow axis: cruise forward until it is confirmed"
+  end
+  if s == nil then return false, "no telemetry" end
+  self.nav:start(list, s)
+  self:engage("NAV", s)
+  self:log("NAV LEG 1/" .. #list)
+  return true, "nav: leg 1/" .. #list
+end
+
+local NAV_LOCKED = { alt = true, alt_step = true, brg = true, brg_step = true, sync = true }
+
+-- Waypoint and route commands. Returns ok, message, or nil when c is not one.
+function M:nav_command(c, v, s)
+  local n = self.nav
+  local nc = self.cfg.nav
+  if c == "goto" then
+    local leg, err = n:resolve(v)
+    if not leg then return false, err end
+    return self:start_nav({ leg }, s)
+  elseif c == "route_add" then
+    local leg, err = n:resolve(v)
+    if not leg then return false, (err:gsub("^goto", "route add"):gsub("| goto", "| route add")) end
+    if #n.route >= nc.max_legs then return false, "route is full (" .. nc.max_legs .. " legs)" end
+    n.route[#n.route + 1] = leg
+    return true, "route leg " .. #n.route
+  elseif c == "route_clear" then
+    n.route = {}
+    return true, "route cleared"
+  elseif c == "route_go" then
+    if #n.route == 0 then return false, "route is empty" end
+    local list = {}
+    for i, leg in ipairs(n.route) do list[i] = { x = leg.x, z = leg.z, y = leg.y, brg = leg.brg, name = leg.name } end
+    return self:start_nav(list, s)
+  elseif c == "route_list" then
+    if #n.route == 0 then return true, "route is empty" end
+    local labels = {}
+    for i, leg in ipairs(n.route) do labels[i] = nav.label(leg) end
+    return true, "route: " .. table.concat(labels, " > ")
+  elseif c == "wp_save" then
+    if not nav.valid_name(v) then return false, nav.NAME_ERROR end
+    if s == nil then return false, "no telemetry" end
+    if n.points[v] == nil and n:count_points() >= nc.max_points then
+      return false, "waypoint list is full (" .. nc.max_points .. ")"
+    end
+    n.points[v] = { x = util.round(s.x), z = util.round(s.z), y = util.round(s.y),
+      brg = util.round(s.hdg) % 360, name = v }
+    return true, "waypoint " .. v .. " saved"
+  elseif c == "wp_del" then
+    if n.points[v] == nil then return false, "no waypoint " .. tostring(v) end
+    n.points[v] = nil
+    return true, "waypoint " .. v .. " deleted"
+  elseif c == "wp_list" then
+    local names = n:names()
+    if #names == 0 then return true, "no waypoints" end
+    return true, "waypoints: " .. table.concat(names, ", ")
+  end
+  return nil
+end
+
 -- Handle one command { c = name, v = value }. Returns ok, message.
 function M:command(msg, s)
   local c, v = msg.c, msg.v
+  local ok, text = self:nav_command(c, v, s)
+  if ok ~= nil then return ok, text end
+  if self.mode == "NAV" and NAV_LOCKED[c] then return false, "NAV is flying: type hover to take over" end
   if c == "mode" then
     if not M.MODES[v] then return false, "unknown mode " .. tostring(v) end
-    if s == nil and (v == "HOVER" or v == "CRUISE") then return false, "no telemetry" end
+    if s == nil and M.FLYING[v] then return false, "no telemetry" end
+    if v == "NAV" and self.mode ~= "NAV" then return false, "nav needs a destination: goto or route go" end
     self:engage(v, s)
     return true, "mode " .. v
   elseif c == "alt" then
@@ -115,13 +198,19 @@ function M:command(msg, s)
     return self:command({ c = "brg", v = base + v }, s)
   elseif c == "spd" then
     if not util.finite(v) then return false, "speed must be a number" end
+    if self.mode == "NAV" then
+      self.nav.speed = util.clamp(math.abs(v), self.cfg.nav.min_speed, self.cfg.speed.max)
+      self:log("NAV SPD " .. util.fmt(self.nav.speed))
+      return true, "nav speed " .. util.fmt(self.nav.speed)
+    end
     self.tgt.spd = util.clamp(v, -self.cfg.speed.max, self.cfg.speed.max)
     if self.mode == "CRUISE" and s then self.spd:set_target(self.tgt.spd, s.v_fwd) end
     self:log("SPD " .. util.fmt(self.tgt.spd))
     return true, "speed " .. util.fmt(self.tgt.spd)
   elseif c == "spd_step" then
     if not util.finite(v) then return false, "step must be a number" end
-    return self:command({ c = "spd", v = (self.tgt.spd or 0) + v }, s)
+    local base = self.mode == "NAV" and self.nav.speed or (self.tgt.spd or 0)
+    return self:command({ c = "spd", v = base + v }, s)
   elseif c == "sync" then
     if s == nil then return false, "no telemetry" end
     self.tgt.alt = util.round(s.y)
@@ -141,6 +230,10 @@ function M:command(msg, s)
     if self.check then
       self.check = nil
       self:log("RCS CHECK STOPPED")
+    end
+    if self.mode == "NAV" and s then
+      self:engage("HOVER", s)
+      self:log("NAV CANCELLED: RCS OFF")
     end
     self.rcs_off = true
     self:log("RCS OFF")
@@ -206,7 +299,7 @@ function M:step(s, now, dt, bank)
     return out
   end
 
-  local flying = self.mode == "HOVER" or self.mode == "CRUISE"
+  local flying = M.FLYING[self.mode]
   local want_up = flying and self.tgt.alt ~= nil and self.tgt.alt > s.y + cfg.altitude.hold_band
   -- Learning uses the force the props are really making (their modelled
   -- spin, which lags the controller by up to ~1.6 s), not the commanded RPM.
@@ -264,6 +357,18 @@ function M:step(s, now, dt, bank)
     self:finish_check()
   end
 
+  if self.mode == "NAV" then
+    local cmd = self.nav:step(s, now)
+    self.tgt.alt, self.tgt.brg, self.tgt.spd = cmd.alt, cmd.brg, cmd.spd
+    -- Re-ramp only when the target changes: set_target plans the ramp from
+    -- the reference's gap to it.
+    local sent = self.nav_sent
+    if not sent or sent.spd ~= cmd.spd or sent.rate ~= cmd.rate then
+      self.spd:set_target(cmd.spd, s.v_fwd, cmd.rate)
+      self.nav_sent = { spd = cmd.spd, rate = cmd.rate }
+    end
+    self.sway_target = cmd.side
+  end
   self:put_lift(out, self.alt:command(s, self.tgt.alt, dt, self.caps.lift_bow_port), s, dt)
   local T = 0
   if self.rcs_off and self.spd.target == 0 then
@@ -280,12 +385,13 @@ function M:step(s, now, dt, bank)
     T = self.spd:command(s, dt, thr_cap, thr_applied, pending)
   end
   out.thrust_port, out.thrust_stbd = T, T
-  local deadzone = self.mode == "HOVER" and cfg.heading.hover_deadzone or cfg.heading.cruise_deadzone
+  local station = self.mode == "HOVER" or (self.mode == "NAV" and self.nav.phase ~= "TRANSIT")
+  local deadzone = station and cfg.heading.hover_deadzone or cfg.heading.cruise_deadzone
   -- Until the frame is confirmed (or learned), a wrong axis would make the
   -- sideways brake push the wrong way: keep it gentle.
   local auth = self.motion:sway_authority()
   local sway = {
-    drift = s.v_side, auth = auth, coming = auth * sw_now * cfg.heading.sway_lag,
+    drift = s.v_side, target = self.sway_target or 0, auth = auth, coming = auth * sw_now * cfg.heading.sway_lag,
     limit = (self.motion.frame_ok or self.bow_learned) and 1 or cfg.heading.probe_limit,
   }
   if self.rcs_off then
@@ -326,7 +432,7 @@ function M:alerts(s, now)
   if self.mode == "DEBUG" then
     list[#list + 1] = "DEBUG: ALL PROPS AT +" .. self.cfg.debug_rpm .. " RPM, LIFT TOO"
   end
-  local flying = self.mode == "HOVER" or self.mode == "CRUISE"
+  local flying = M.FLYING[self.mode]
   if self.rcs_full_since and now - self.rcs_full_since > 3 then
     list[#list + 1] = "RCS AT FULL: HEADING NOT HELD"
     if self.hdg:authority() <= self.cfg.heading.min_authority * 1.5 then
@@ -349,7 +455,7 @@ function M:alerts(s, now)
   if s and math.abs(s.yaw_rate) > 3 * self.cfg.heading.max_rate then
     list[#list + 1] = "SPINNING " .. util.fmt(s.yaw_rate, 0) .. " DEG/S"
   end
-  if self.alt.saturated and (self.mode == "HOVER" or self.mode == "CRUISE") then
+  if self.alt.saturated and flying then
     list[#list + 1] = "ELEVATION AT RPM CAP"
   end
   if self.spd.pitch_hold then list[#list + 1] = "PITCH LIMIT: THRUST HELD" end

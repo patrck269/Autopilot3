@@ -35,6 +35,12 @@ if scenario == "velocity" then
   ship.getVelocity = function() return { x = 20 + 2 * os.clock(), y = 0, z = 0 } end
   ship.getQuaternion = function() return { v = { x = 0, y = 0, z = 0 }, a = 1 } end
 end
+if scenario == "nav" then
+  -- NAV needs a confirmed bow axis: start from a saved calibration.
+  local h = fs.open("/ap3_cal.dat", "w")
+  h.write(textutils.serialize({ k = 10 / (W.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } }))
+  h.close()
+end
 
 local report = {}
 local failures = 0
@@ -289,7 +295,7 @@ local function both_script()
   local reached = wait_y(120, 70)
   check(reached ~= nil, "ship lifts off and holds Y 120", string.format("y %.2f after %s s", w.y, tostring(reached)))
   sleep(5)
-  local band = cfg.altitude.hold_release + 0.5
+  local band = 1.0
   check(math.abs(w.y - 120) < band, "still at 120 five seconds later (within the hold band)", string.format("y %.2f", w.y))
 
   press("monitor_5", "B2") -- BOMB
@@ -443,7 +449,47 @@ local function velocity_script()
   near("monitor_6", "GS", 0)
 end
 
-local scripts = { both = both_script, missing = missing_script, velocity = velocity_script }
+local function nav_script()
+  sleep(2)
+  type_line("alt 200")
+  type_line("hover")
+  local reached = wait_y(200, 90)
+  check(reached ~= nil, "lifts off and holds Y 200", string.format("y %.2f", w.y))
+  type_line("wp save home")
+  check(fs.exists("/ap3_nav.dat"), "wp save writes /ap3_nav.dat")
+  local tx, tz = math.floor(w.x + 40 + 0.5), math.floor(w.z + 0.5)
+  type_line(string.format("goto %d %d 200 90", tx, tz))
+  press("monitor_7", "B1") -- MENU
+  press("monitor_7", "T4") -- the fourth page: NAV
+  check(shows("monitor_7", "LEG 1/1"), "MENU -> NAV shows the active leg")
+  local t0, arrived = os.clock(), nil
+  while os.clock() - t0 < 120 do
+    if shows("monitor_7", "ARRIVED") then arrived = os.clock() - t0; break end
+    sleep(0.5)
+  end
+  check(arrived ~= nil, "NAV page shows ARRIVED within 120 s", tostring(arrived))
+  local d = math.sqrt((w.x - tx) ^ 2 + (w.z - tz) ^ 2)
+  local herr = math.abs(((w.psi - 90 + 180) % 360) - 180)
+  check(d <= 2, "holds within 2 blocks of the point", string.format("%.2f blocks", d))
+  check(herr <= cfg.heading.hover_deadzone + 0.5, "points at bearing 90", string.format("hdg %.2f", w.psi))
+  check(math.abs(w.y - 200) < 1.5, "at Y 200", string.format("y %.2f", w.y))
+  dump("nav arrived")
+
+  type_line("rec on")
+  sleep(3)
+  type_line("rec off")
+  local rows, header = 0, nil
+  if fs.exists("/ap3_rec.csv") then
+    local h = fs.open("/ap3_rec.csv", "r")
+    header = h.readLine()
+    while h.readLine() do rows = rows + 1 end
+    h.close()
+  end
+  check(header == require("ap3.recorder").HEADER, "recording has the CSV header", tostring(header))
+  check(rows >= 10, "3 s of recording holds at least 10 rows", rows .. " rows")
+end
+
+local scripts = { both = both_script, missing = missing_script, velocity = velocity_script, nav = nav_script }
 local ok, err = pcall(parallel.waitForAny,
   physics,
   function() shell.run("/ap3_start.lua") end,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- NAV mode: `goto X Z [Y] [BRG]` or `goto <name>` flies to a world point, climbing first and descending last, holds position there by translating (pushers fore/aft, RCS sideways) and turns to the final bearing. `wp save|del|list` keeps up to 30 named waypoints and `route add|go|clear|list` a stored route of up to 20 legs, with fly-through legs and stops; both are saved in `/ap3_nav.dat`. A stop within 24 blocks is reached by translation alone. New NAV MFD page (through MENU), a NAV line on the terminal and a waypoint mark on the HSI.
+- The sideways brake tracks a sideways velocity target (0 except in NAV HOLD). Its wrong-direction guard restarts its window while the hull turns, so a turn at speed no longer disables it.
+- Altitude is held closed-loop: the open-loop held lift RPM drifted 2.1 blocks peak to peak in a limit cycle; the simulated band with velocity noise is now under 1 block. The lift deadband rises from 5 to 10 RPM, `altitude.hold_release` is gone, and a lift trim under 20 RPM no longer jumps ahead of a due pusher or RCS batch.
+- A learned or saved full-thrust pusher acceleration under 0.3 m/s² (`speed.min_accel_full`) is not believed; computer 12's saved 0.05 was the learner's floor and reloads as the 1.5 m/s² first guess.
+- RCS yaw-rate cap raised from 4 to 15 deg/s; the 0.15 deg/s² arrival deceleration still limits a 180° turn to about 9 deg/s.
+- Cruise thrust is also held after two write intervals inside the hold band: paced writes could swing the pushers 400 RPM up and down every second around the target. A pusher reversal no longer spends a write on a remainder under half a step (884 → 484 → 0).
+- Flight recorder: `rec on|off` writes five rows a second to `/ap3_rec.csv`; `tools/rec_analyze.py` reports phantom velocity, altitude and heading peak-to-peak, and whether HOVER heading corrections follow pusher or lift RPM changes.
 - Anticipate pending pusher force and taper acceleration before the speed ramp ends. Cruise hold now checks projected speed and freezes its integral instead of capturing an accelerating pass through the target.
 - Enforce each motor's write interval within coordinated batches and measure it from call completion. A due motor no longer forces recently written partners to update; KILL still bypasses pacing. Adjust the yaw lead to the enforced cadence.
 - Invert bomb-door output: powered closes, unpowered opens. Startup closes the doors without firing any bomb triggers; manual and timed closing use the same polarity.

@@ -1,7 +1,7 @@
 """Run the CraftOS-PC smoke scenarios.
 
 Usage: python tests/cc/run.py <path to CraftOS-PC_console.exe> [scenario ...]
-Scenarios: both, missing, velocity (default: all three). Each stages the repo into a throwaway
+Scenarios: both, missing, velocity, nav (default: all four). Each stages the repo into a throwaway
 CraftOS data directory with tests/cc/harness.lua as startup.lua, runs the
 emulator headless, and prints /report.txt.
 """
@@ -50,7 +50,7 @@ def run(exe: str, scenario: str) -> bool:
 
 def main() -> int:
     exe = sys.argv[1]
-    scenarios = sys.argv[2:] or ["both", "missing", "velocity"]
+    scenarios = sys.argv[2:] or ["both", "missing", "velocity", "nav"]
     results = [run(exe, s) for s in scenarios]
     return 0 if all(results) else 1
 

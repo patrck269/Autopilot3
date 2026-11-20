@@ -5,7 +5,7 @@ package.path = "./?.lua;" .. package.path
 colors = setmetatable({}, { __index = function() return 1 end })
 local mfd = require("ap3.mfd")
 
-local IDS = { "PFD", "AP", "HSI", "ENG", "BOMB", "CAL", "SYS", "UFC" }
+local IDS = { "PFD", "AP", "HSI", "NAV", "ENG", "BOMB", "CAL", "SYS", "UFC" }
 local pages = {}
 for _, id in ipairs(IDS) do pages[#pages + 1] = { id = id, title = id, draw = function() end } end
 local function displays(n)

@@ -24,11 +24,12 @@
 -- thrust line that misses the centre of mass. A correction starts past the
 -- deadzone and stops within settle_deg; in between the learned trim is held.
 --
--- Sideslip: drift along the hull's starboard axis past sway_engage starts a
--- brake that runs until the drift is under sway_settle; it also stops early
--- when the props' remaining spin will finish the job (they take over a second
--- to spin down). The sideways strength comes from ap3/motion.lua. Heading has
--- first call on the RCS; sway gets what is left.
+-- Sideslip: the brake tracks a sideways velocity target (0 except in NAV
+-- HOLD, where it translates the hull toward the point). An error past
+-- sway_engage starts it; it runs until the error is under sway_settle, and
+-- stops early when the props' remaining spin will finish the job (they take
+-- over a second to spin down). The sideways strength comes from
+-- ap3/motion.lua. Heading has first call on the RCS; sway gets what is left.
 local util = require("ap3.util")
 local rls = require("ap3.rls")
 
@@ -96,9 +97,10 @@ end
 
 -- Returns the turn force u and the sway force sw, both normalised.
 -- deadzone: bearing error (deg) tolerated before an active correction starts.
--- sway: { drift = m/s toward starboard, auth = m/s^2 at full sway force,
--- limit = largest sway force allowed, coming = m/s the props' current spin
--- will still add to the drift } or nil to leave sideslip alone.
+-- sway: { drift = m/s toward starboard, target = wanted m/s toward starboard
+-- (nil = 0), auth = m/s^2 at full sway force, limit = largest sway force
+-- allowed, coming = m/s the props' current spin will still add to the drift }
+-- or nil to leave sideslip alone.
 -- pending: turn force the motors are set to but the props have not yet
 -- reached (they spin up and down at 32 RPM a tick); it adds a lead to the
 -- yaw-rate loop so it does not keep pushing what is already on its way.
@@ -139,25 +141,31 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
   local sw = 0
   self.drift = 0
   if sway and not self.sway_failed then
-    local drift = sway.drift + (sway.coming or 0)
+    local err = sway.drift - (sway.target or 0)
+    local ahead = err + (sway.coming or 0)
     self.drift = sway.drift
     if self.sway_active then
-      if math.abs(drift) < c.sway_settle or math.abs(sway.drift) < c.sway_settle then self.sway_active = false end
-    elseif math.abs(sway.drift) > c.sway_engage then
+      if math.abs(ahead) < c.sway_settle or math.abs(err) < c.sway_settle then self.sway_active = false end
+    elseif math.abs(err) > c.sway_engage then
       self.sway_active = true
-      self.sway_t, self.sway_start = 0, math.abs(sway.drift)
+      self.sway_t, self.sway_start = 0, math.abs(err)
     end
     if self.sway_active then
       -- Guard: braking for a while and the drift has grown? Then the brake
       -- is pushing the wrong way (wrong bow axis or corner labels): stop.
+      -- A turn at speed swings the hull's own momentum into sideslip, so
+      -- the guard window starts again while the hull turns.
+      if math.abs(s.yaw_rate) > 2 * c.engage_rate then
+        self.sway_t, self.sway_start = 0, math.max(self.sway_start, math.abs(err))
+      end
       self.sway_t = self.sway_t + dt
-      if self.sway_t > c.sway_guard_time and math.abs(sway.drift) > 1.2 * self.sway_start + 0.2 then
+      if self.sway_t > c.sway_guard_time and math.abs(err) > 1.2 * self.sway_start + 0.2 then
         self.sway_failed, self.sway_active = true, false
         return u, 0
       end
       local auth = math.max(sway.auth, c.min_sway_authority)
       local slimit = sway.limit or 1
-      sw = util.clamp(-c.sway_gain * drift / auth, -slimit, slimit)
+      sw = util.clamp(-c.sway_gain * ahead / auth, -slimit, slimit)
       local room = 1 - math.abs(u)
       sw = util.clamp(sw, -room, room)
     end

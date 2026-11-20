@@ -22,13 +22,16 @@ function M.new(cfg, saved)
   local c = cfg.speed
   local A = c.accel_full
   local Dn = A * (S / c.top_speed) ^ 2
-  if saved and util.finite(saved.A) and util.finite(saved.Dn) and saved.A > 0 then
+  -- A saved strength under min_accel_full was learned at the clamp (no real
+  -- push measured): start from the first guess instead.
+  if saved and util.finite(saved.A) and util.finite(saved.Dn) and saved.A >= c.min_accel_full then
     A, Dn = saved.A, saved.Dn
   end
   return setmetatable({
     c = c,
     A = A,
     write_rate = cfg.actuator.slew.thrust / cfg.actuator.min_interval.thrust,
+    write_wait = cfg.actuator.min_interval.thrust,
     Dn = Dn,
     est = rls.new({ A, Dn }, { 4, 4 }, 0.98),
     target = 0,
@@ -67,7 +70,8 @@ function M:reset(v_now)
   self:set_target(self.target, v_now)
 end
 
-function M:set_target(target, v_now)
+-- min_rate (optional): slowest reference ramp for this target, m/s^2.
+function M:set_target(target, v_now, min_rate)
   -- Thrust is only rewritten about once a second, so the reference stops
   -- cap_margin short of the hard cap to keep the overshoot under it.
   local limit = self.c.max - self.c.cap_margin
@@ -76,7 +80,7 @@ function M:set_target(target, v_now)
   -- A stop must finish braking, not merely finish the reference ramp.
   local duration = self.target == 0 and math.max(self.c.ramp_time - self.c.thrust_lag, self.c.thrust_lag)
     or self.c.ramp_time
-  self.rate = math.max(gap / duration, self.c.min_ramp)
+  self.rate = math.max(gap / duration, self.c.min_ramp, min_rate or 0)
 end
 
 -- Learn A and D from 0.5 s windows of measured acceleration.
@@ -100,7 +104,7 @@ function M:observe(s, applied_f, now)
 
   self.est:update({ f, x2 }, y)
   local t = self.est.t
-  t[1] = util.clamp(t[1], 0.05, 30)
+  t[1] = util.clamp(t[1], self.c.min_accel_full, 30)
   t[2] = util.clamp(t[2], 0, 60)
   self.A, self.Dn = t[1], t[2]
 end
@@ -185,20 +189,26 @@ function M:command(s, dt, cap, applied_rpm, pending)
   -- hold_release, so the pushers are not rewritten every loop.
   -- Passing through the target while still accelerating is not settled.
   -- Use the force already at the props to preview capture and release.
+  -- Inside hold_band for two write intervals also captures: the paced
+  -- writes can otherwise swing the pushers one slew step up and down every
+  -- write around the target, and the preview never settles.
   local projected = v + net_accel * horizon
   if self.target ~= 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold then
+    local inside = math.abs(v - self.target) < c.hold_band
+    self.in_band = inside and (self.in_band or 0) + dt or 0
     if self.held_f then
       if math.max(math.abs(v - self.target), math.abs(projected - self.target)) > c.hold_release then
         self.held_f = nil
       else
         f = self.held_f
       end
-    elseif math.abs(v - self.target) < c.hold_band and math.abs(projected - self.target) < c.hold_band then
+    elseif inside and (math.abs(projected - self.target) < c.hold_band or self.in_band >= 2 * self.write_wait) then
       self.held_f = util.clamp((self:drag(self.target) + self.integ) / self.A, -1, 1)
       f = self.held_f
     end
   else
     self.held_f = nil
+    self.in_band = 0
   end
 
   if self.pitch_hold then

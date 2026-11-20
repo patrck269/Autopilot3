@@ -193,6 +193,9 @@ function M:next_value(c, now, in_batch)
   end
   local slew = self.cfg.slew[c.group]
   local v = have + util.clamp(delta, -slew, slew)
+  -- Reversing: stop at 0 on the way through, and never spend a write
+  -- interval on a residue short of 0 (884 -> 484 -> 84 -> 0 -> -400).
+  if have ~= 0 and want ~= 0 and util.sign(want) ~= util.sign(have) and math.abs(v) < slew / 2 then v = 0 end
   if have ~= 0 and v ~= 0 and util.sign(v) ~= util.sign(have) then v = 0 end
   return v
 end
@@ -267,17 +270,20 @@ function M:service(now)
     table.remove(self.batch, 1)
   end
 
-  -- Otherwise the lift, then the largest weighted need.
+  -- Otherwise the lift, then the largest weighted need. A lift trim (no
+  -- corner moving by twice the lift deadband) waits its turn like the
+  -- others: holding altitude closed-loop trims the lift often.
   local best, best_need = nil, -1
   for _, name in ipairs({ "lift", "rcs", "thrust" }) do
     local list = self:group_due(name, now)
     if list then
-      local need = 0
+      local need, step = 0, 0
       for _, w in ipairs(list) do
         local c = self.ch[w.id]
         need = math.max(need, math.abs((c.desired or 0) - (c.applied or 0)) / c.cap * self.cfg.weight[name])
+        step = math.max(step, math.abs(w.v - (c.applied or 0)))
       end
-      if name == "lift" then need = need + 1000 end
+      if name == "lift" and step >= 2 * self.cfg.deadband.lift then need = need + 1000 end
       if need > best_need then best, best_need = list, need end
     end
   end

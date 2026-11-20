@@ -47,7 +47,7 @@ return {
   actuator = {
     prop_slew = 32,       -- Clockwork props change spin by at most this RPM per tick
     min_interval = { lift = 1.0, thrust = 1.0, rcs = 1.0 }, -- seconds between writes to one motor
-    deadband = { lift = 5, thrust = 15, rcs = 100 },        -- smallest RPM change worth a write
+    deadband = { lift = 10, thrust = 15, rcs = 100 },       -- smallest RPM change worth a write
     weight = { lift = 3, thrust = 2, rcs = 1.5 },            -- which group gets the next write
     slew = { thrust = 400, lift = 300, rcs = 2000 },         -- largest RPM change per write
     rcs_min_rpm = 100,    -- smaller RCS commands are sent as 0 (finer pulses for a strong RCS)
@@ -64,8 +64,7 @@ return {
     int_gain = 0.02,      -- altitude integral, (m/s^2) per block-second
     int_limit = 1.0,      -- integral limit, m/s^2
     int_zone = 6,         -- integral runs inside this many blocks
-    hold_band = 0.5,      -- settled within this many blocks (and |vy| < 0.25): lift RPM is held
-    hold_release = 1.0,   -- held lift RPM is recomputed once the hull drifts this many blocks
+    hold_band = 0.5,      -- within this many blocks (and |vy| < 0.4) the phase shows HOLD
     reverse_lift = false, -- the lift props are pullers: never written below 0
     -- Hover calibration. Lift = k * airDensity(y) * rpm^2 per corner, learned in flight.
     -- Keep the first guess low: on the ground the RPM is raised step by step
@@ -101,12 +100,13 @@ return {
     pitch_limit = 6,      -- degrees of acceleration-induced nose dip before thrust is held back
     -- Thrust model a = A*f - D*v|v| (f = normalised force, rpm^2/cap^2), learned in flight.
     accel_full = 1.5,     -- first guess: m/s^2 at full pusher thrust
+    min_accel_full = 0.3, -- m/s^2 at full thrust: a learned or saved value below this is not believed
     top_speed = 40,       -- first guess: speed where full thrust equals drag
   },
 
   heading = {
     bearing_gain = 0.2,   -- (deg/s) of yaw rate per degree of bearing error
-    max_rate = 4,         -- max yaw rate, deg/s
+    max_rate = 15,        -- max commanded yaw rate, deg/s (yaw_accel limits how much of it a turn uses)
     yaw_accel = 0.15,     -- yaw deceleration planned when arriving, deg/s^2 (RCS updates lag ~3 s)
     rate_gain = 0.4,      -- (deg/s^2) per deg/s of yaw-rate error
     int_gain = 0.1,       -- integral (deg/s^2) per (deg/s * s)
@@ -145,6 +145,33 @@ return {
     yaw_lag = 1.0,        -- s: lead on yaw rate, including the enforced per-motor write interval
   },
 
+  -- NAV: 'goto' and routes (see ap3/nav.lua).
+  nav = {
+    speed = 25,            -- default transit speed, m/s ('spd' changes it while NAV flies)
+    min_speed = 5,         -- slowest transit speed 'spd' may set
+    brake_accel = 0.5,     -- planned deceleration approaching a stop, m/s^2
+    stop_margin = 4,       -- blocks short of a stop where the transit profile reaches 0
+    align_deg = 20,        -- no forward speed while the bow is further than this off the course
+    capture = 8,           -- stop waypoint: HOLD takes over inside this distance
+    pass_radius = 12,      -- fly-through waypoint: the next leg starts inside this distance
+    translate_radius = 24, -- a stop this close when its leg starts is reached by translation alone
+    climb_band = 1.5,      -- CLIMB ends within this many blocks of the transit altitude
+    hold_engage = 1.5,     -- position hold drives toward the point beyond this distance (blocks)
+    hold_settle = 0.75,    -- and rests inside this distance (with ground speed < 0.3 m/s)
+    hold_margin = 0.5,     -- translation profile reaches 0 this far from the point
+    hold_gain = 0.5,       -- (m/s) per block of position error
+    hold_accel = 0.3,      -- planned translation deceleration, m/s^2
+    hold_lead = 1.5,       -- s: position hold steers on the position this far ahead (pusher and RCS lag)
+    hold_fwd_max = 4,      -- fastest fore/aft translation, m/s
+    hold_side_max = 2,     -- fastest sideways translation, m/s
+    settle_time = 3,       -- s settled at a stop before the next leg starts
+    max_legs = 20,
+    max_points = 30,
+  },
+
+  -- Flight recorder ('rec on'): one CSV row every 'every' control steps.
+  rec = { every = 2, min_free = 100000 }, -- stops itself when the disk has less than min_free bytes
+
   -- DEBUG mode RPM for every motor (written to the block as is).
   debug_rpm = 15,
 
@@ -179,4 +206,6 @@ return {
   mfd_file = "/ap3_mfd.dat",
   bomb_file = "/ap3_bombs.dat",   -- bombs used and salvo size
   rcs_off_file = "/ap3_rcs.off",  -- present while the helm steers (rcs off)
+  nav_file = "/ap3_nav.dat",      -- waypoints and the stored route
+  rec_file = "/ap3_rec.csv",      -- flight recorder output
 }

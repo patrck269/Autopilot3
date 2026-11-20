@@ -81,7 +81,7 @@ function M.run(cfg, opts)
   function ctx.send(c, v)
     seq = seq + 1
     link:send_command({ c = c, v = v, seq = seq })
-    ctx.reply = "sent " .. c .. (v ~= nil and (" " .. tostring(v)) or "")
+    ctx.reply = "sent " .. c .. ((v ~= nil and type(v) ~= "table") and (" " .. tostring(v)) or "")
     return true
   end
 
@@ -112,6 +112,12 @@ function M.run(cfg, opts)
         line(5, string.format("Bombs %d/46  salvo %s  doors %s  next %s", b.left, tostring(b.size),
           b.doors_open and "OPEN" or "SHUT", b.reason or "READY"), b.reason and colors.orange or colors.lime)
         y = 6
+      end
+      if st.mode == "NAV" and st.nav and st.nav.last then
+        local l = st.nav.last
+        line(y, string.format("NAV %d/%d %s  dist %s  brg %s", l.i, l.n, tostring(st.nav.phase),
+          util.fmt(l.d, 0), util.compass(l.brg_to)), colors.cyan)
+        y = y + 1
       end
       for _, a in ipairs(st.alerts or {}) do
         if y < h - 2 then line(y, a, colors.red); y = y + 1 end

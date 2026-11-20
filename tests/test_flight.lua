@@ -5,11 +5,12 @@ local plant = require("tests.plant")
 local util = require("ap3.util")
 
 -- Station keeping holds inside deliberate bands (fewer controller writes):
--- altitude within hold_release, heading within the mode's deadzone, plus about
--- half a unit for actuator lag. Clockwork props take ~3.1 s to spin from 0 to
--- 2000 RPM (world.lua models that), which costs a little more at speed.
+-- altitude is held closed-loop within 1 block, heading within the mode's
+-- deadzone plus about half a unit for actuator lag. Clockwork props take
+-- ~3.1 s to spin from 0 to 2000 RPM (world.lua models that), which costs a
+-- little more at speed.
 local CFG = dofile("ap3/config.lua")
-local ALT_TOL = CFG.altitude.hold_release + 0.5
+local ALT_TOL = 1.0
 local HDG_HOVER = CFG.heading.hover_deadzone + 0.5
 local HDG_CRUISE = 4
 
@@ -635,6 +636,140 @@ do
   check(forward_brake and math.abs(sim.s.v_fwd) < 0.5,
     "zero target brakes reverse motion", string.format("%.2f m/s", sim.s.v_fwd))
   check(sim.w.cmd.thrust_port == 0 and sim.w.cmd.thrust_stbd == 0, "pushers rest after stopping")
+end
+
+print("31. Closed-loop altitude hold")
+do
+  -- The open-loop held RPM drifted out to the release band and back (2.15
+  -- blocks peak to peak with this noise).
+  math.randomseed(7)
+  local sim = plant.new({ hover_rpm_sea = 900, noise = 0.15 })
+  sim.cmd("alt", 150)
+  sim.cmd("mode", "HOVER")
+  sim.run(90)
+  local m = watch()
+  sim.run(180, m.hook)
+  check(m.max_y - m.min_y <= 1.0, "180 s hover stays within 1 block peak to peak",
+    string.format("min %.2f max %.2f", m.min_y, m.max_y))
+  check(sim.ap.alt.phase == "HOLD", "phase reads HOLD", sim.ap.alt.phase)
+end
+
+print("32. A saved pusher strength at the learner's floor is not believed")
+do
+  local sim = plant.new({ saved = { A = 0.05, Dn = 1.77 } })
+  check(sim.ap.spd.A == CFG.speed.accel_full, "starts from the first guess", tostring(sim.ap.spd.A))
+end
+
+-- Airborne at Y (default 200), heading north, bow axis confirmed.
+local function nav_hull(y)
+  local sim = plant.new({ y = y or 200, lift = 900, psi = 0,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", y or 200)
+  sim.cmd("mode", "HOVER")
+  sim.run(20)
+  return sim
+end
+
+local function flat(sim, x, z)
+  return math.sqrt((sim.w.x - x) ^ 2 + (sim.w.z - z) ^ 2)
+end
+
+print("33. NAV HOLD: a nearby point is reached by translation, not by turning")
+do
+  local sim = nav_hull()
+  sim.cmd("goto", { x = 10, z = -6, y = 200, brg = 0 })
+  local worst_hdg, late_d, t0 = 0, 0, sim.w.t
+  sim.run(60, function(s2, s)
+    worst_hdg = math.max(worst_hdg, math.abs(util.wrap180(s.hdg)))
+    if s2.w.t - t0 > 40 then late_d = math.max(late_d, flat(s2, 10, -6)) end
+  end)
+  check(late_d <= 2, "within 2 blocks for the last 20 s", string.format("worst %.2f", late_d))
+  check(worst_hdg <= 10, "heading never more than 10 deg from 0", string.format("worst %.2f", worst_hdg))
+  check(sim.ap.nav.phase == "ARRIVED", "phase ARRIVED", tostring(sim.ap.nav.phase))
+end
+
+print("34. 15 deg/s turn cap: a 180 deg hover turn")
+do
+  local sim = nav_hull()
+  sim.cmd("brg", 180)
+  local t0, peak, within, over, near = sim.w.t, 0, nil, 0, false
+  sim.run(80, function(s2, s)
+    peak = math.max(peak, math.abs(s.yaw_rate))
+    local e = util.wrap180(s.hdg - 180)
+    if math.abs(e) < 20 then near = true end
+    if near then over = math.max(over, e) end
+    if not within and math.abs(e) <= 2 then within = s2.w.t - t0 end
+  end)
+  check(peak <= 16, "peak yaw rate at most 16 deg/s", string.format("%.1f", peak))
+  check(within ~= nil and within <= 50, "within 2 deg of 180 by 50 s", tostring(within))
+  check(over <= 2, "overshoot past 180 at most 2 deg", string.format("%.2f", over))
+end
+
+-- Run until NAV has been ARRIVED (and stayed) for hold seconds. Returns the
+-- time ARRIVED was first seen.
+local function fly_nav(sim, seconds, hook)
+  local t0, arrived = sim.w.t, nil
+  sim.run(seconds, function(s2, s)
+    if hook then hook(s2, s) end
+    if s2.ap.nav.phase == "ARRIVED" then arrived = arrived or (s2.w.t - t0) end
+  end)
+  return arrived
+end
+
+print("35. goto with a final bearing: climb first, hold, turn")
+do
+  local sim = nav_hull()
+  sim.cmd("goto", { x = 400, z = 300, y = 230, brg = 270 })
+  local min_y, left_climb = math.huge, false
+  local arrived = fly_nav(sim, 300, function(s2, s)
+    local phase = s2.ap.nav.phase
+    if phase ~= "CLIMB" then left_climb = true end
+    if left_climb and phase ~= "ARRIVED" then min_y = math.min(min_y, s.y) end
+  end)
+  check(min_y >= 228.5, "flies at 230 once out of CLIMB", string.format("min %.2f", min_y))
+  check(arrived ~= nil, "ARRIVED within 300 s", tostring(arrived))
+  local worst_d, worst_h, worst_y = 0, 0, 0
+  sim.run(20, function(s2, s)
+    worst_d = math.max(worst_d, flat(s2, 400, 300))
+    worst_h = math.max(worst_h, math.abs(util.wrap180(s.hdg - 270)))
+    worst_y = math.max(worst_y, math.abs(s.y - 230))
+  end)
+  -- The bearing is held with the hover deadzone, like every hover (HDG_HOVER).
+  check(sim.ap.nav.phase == "ARRIVED" and worst_d <= 2 and worst_h <= HDG_HOVER and worst_y <= 1.0,
+    "holds the point, bearing 270 (+-" .. HDG_HOVER .. ") and Y 230 for 20 s",
+    string.format("d %.2f hdg %.2f y %.2f", worst_d, worst_h, worst_y))
+  print(string.format("     arrived after %.1f s", arrived or -1))
+end
+
+print("36. goto lower: descend last")
+do
+  local sim = nav_hull(250)
+  sim.cmd("goto", { x = 300, z = 0, y = 180, brg = 90 })
+  local min_far = math.huge
+  local arrived = fly_nav(sim, 300, function(s2, s)
+    if flat(s2, 300, 0) > 3 then min_far = math.min(min_far, s.y) end
+  end)
+  check(min_far >= 248, "stays up while more than 3 blocks out", string.format("min %.2f", min_far))
+  check(arrived ~= nil and math.abs(sim.s.y - 180) <= 1.0, "ends at Y 180",
+    string.format("y %.2f, arrived %s", sim.s.y, tostring(arrived)))
+end
+
+print("37. Route: fly through a waypoint, stop at the last")
+do
+  local sim = nav_hull()
+  sim.cmd("route_add", { x = 200, z = 0 })
+  sim.cmd("route_add", { x = 200, z = 200, y = 200, brg = 180 })
+  sim.cmd("route_go")
+  local closest, gs_there = math.huge, 0
+  local arrived = fly_nav(sim, 300, function(s2, s)
+    local d = flat(s2, 200, 0)
+    if d < closest then closest, gs_there = d, math.sqrt(s2.w.vx ^ 2 + s2.w.vz ^ 2) end
+  end)
+  check(gs_there >= 5, "does not stop at the fly-through waypoint",
+    string.format("%.2f m/s at %.1f blocks", gs_there, closest))
+  check(arrived ~= nil and flat(sim, 200, 200) <= 2 and math.abs(util.wrap180(sim.s.hdg - 180)) <= 2,
+    "ARRIVED at the last leg, bearing 180",
+    string.format("d %.2f hdg %.2f arrived %s", flat(sim, 200, 200), sim.s.hdg, tostring(arrived)))
 end
 
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))

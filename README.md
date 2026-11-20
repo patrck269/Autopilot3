@@ -66,7 +66,7 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 |---|---|---|
 | `alt 150` | AP: ALT ±1/±10, UFC: ALT SET | Target altitude (world Y) |
 | `brg 90` | AP: BRG ±5, HSI: BRG ±1/±10/SYNC, UFC: BRG SET | Target bearing, 0 = N, 90 = E |
-| `spd 30` / `spd -5` | AP: SPD ±1/±5, UFC: SPD SET | Signed target speed, clamped to −35…+35 m/s. Negative backs up while keeping the bow on the selected bearing; engage CRUISE to drive it |
+| `spd 30` / `spd -5` | AP: SPD ±1/±5, UFC: SPD SET | Signed target speed, clamped to −35…+35 m/s. Negative backs up while keeping the bow on the selected bearing; engage CRUISE to drive it. In NAV it sets the transit speed instead (5…35 m/s) |
 | `spd 0` | AP: SPD 0, between SPD +1 and SPD −1 | Brake to a stop and rest the pushers while retaining altitude/heading control. With `rcs off`, release the pushers instead of station-keeping braking |
 | `hover` | HOVR | Climb or descend to the altitude and hold it. Brake to a stop, hold heading, cancel drift |
 | `cruise` | CRZ | Altitude, bearing, and speed together |
@@ -83,8 +83,39 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 | `salvo 1` (`3`, `5`, `10`, `all`) | BOMB: 1 3 5 10 ALL | Bombs per drop |
 | `drop` | BOMB: DROP | Drop one salvo (see Bomb bay) |
 | `reload` | BOMB: RELOAD then CONF RELOAD | Mark every bomb loaded again |
+| `goto X Z [Y] [BRG]` / `goto <name>` | — | NAV to a world point (see Navigation). Without Y the altitude is kept; with BRG the ship turns to it there |
+| `wp save <name>` / `wp del <name>` / `wp list` | — | Named waypoints: the current position, altitude and heading (up to 30, saved in `/ap3_nav.dat`) |
+| `route add X Z [Y] [BRG]` / `route add <name>` | — | Append a leg to the stored route (up to 20). A leg with BRG is a stop; others are flown through |
+| `route go` / `route clear` / `route list` | NAV: NAV GO, CLR ROUTE then CONF CLEAR | Fly the stored route (it is kept), empty it, or show it |
+| `rec on` / `rec off` | — | Flight recorder (see Flight recorder) |
 
-Type `help` for the list. If the computer reboots while the lift is spinning, it takes over in HOVER at the current altitude.
+Type `help` for the list. If the computer reboots while the lift is spinning, it takes over in HOVER at the current altitude (NAV never resumes on its own).
+
+## Navigation
+
+`goto` and `route go` fly in NAV mode. They need RCS on, the ship in the air and a confirmed bow axis (cruise forward once on a new hull). While NAV flies, `alt`, `brg` and `sync` are refused; `hover` (or any other mode) takes over and ends NAV, and `rcs off` drops it to HOVER.
+
+Each leg climbs first and descends last. The ship flies at the higher of its altitude and the leg's, and only descends once it is within 3 blocks of a stop.
+
+| Phase | What happens |
+|---|---|
+| CLIMB | Climb (or stay) at the transit altitude while turning toward the point; no forward speed |
+| TRANSIT | Bow on the point at the NAV speed (25 m/s, `spd` changes it). Speed follows a 0.5 m/s² braking profile that reaches 0 four blocks short of the next stop; no forward speed while the bow is more than 20° off the course. A fly-through leg hands over to the next one 12 blocks out |
+| HOLD | Inside 8 blocks of a stop: hold position by translating, without turning. The pushers move the hull fore/aft (up to 4 m/s), the RCS sideways (up to 2 m/s). Hold drives back toward the point beyond 1.5 blocks and rests inside 0.75 blocks. The ship then descends and turns to the stop's bearing. Settled for 3 s, the next leg starts |
+| ARRIVED | The last stop is reached; the ship keeps holding there |
+
+A stop closer than 24 blocks when its leg starts is reached in HOLD alone, sideways or backwards if need be. A stop without a bearing keeps the heading the ship had when it got there. The last leg of a route is always a stop.
+
+## Flight recorder
+
+`rec on` writes five rows a second to `/ap3_rec.csv` (overwritten each time) until `rec off`: time, mode, position, API velocity, attitude, yaw rate, targets, speed reference, altitude phase, whether the heading correction and the sideways brake are active, NAV phase and the RPM on all ten motors. The alert list shows RECORDING while it runs. It stops on its own, with "RECORDER FULL", when the computer has under 100 kB free.
+
+On the host, `python tools/rec_analyze.py ap3_rec.csv` prints:
+
+- `PHANTOM_VELOCITY yes|no`: the hull stood still (by position) for 5 s or more while the velocity API read over 0.5 m/s different
+- `ALT_P2P`: the largest peak-to-peak altitude error over 30 s or more at one altitude target (climbs and descents left out)
+- `HDG_P2P`: the same for heading error in HOVER
+- `HDG_AFTER_PUSHER` / `HDG_AFTER_LIFT`: the share of HOVER heading corrections that started within 2 s of a pusher (or lift) RPM change
 
 ## Bomb bay
 
@@ -117,7 +148,8 @@ At first start, display 1 shows PFD, display 2 BOMB, display 3 HSI and display 4
 |---|---|
 | PFD | Attitude (pitch ladder, roll), heading and bearing, ground and forward speed, altitude, target, vertical speed, altitude and speed phases |
 | AP | Mode, every target against its actual value, bearing error, speed reference, hover RPM here and at the target, alerts |
-| HSI | Heading-up compass rose with bearing bug and track, ground speed, drift, X/Z position |
+| HSI | Heading-up compass rose with bearing bug, track and (in NAV) a `W` toward the point, ground speed, drift, X/Z position |
+| NAV | Leg, phase, the point (name or X,Z), its altitude and bearing, distance, bearing to it and ETA, the HOLD fore/aft and sideways offsets, NAV speed, route length and waypoint names. HOVR/CRZ/STBY, NAV GO (fly the route), CLR ROUTE then CONF CLEAR, SPD ±5. Reached through MENU |
 | ENG | Each motor's applied and desired RPM against its cap. Red: missing. A red bar: the last write failed |
 | BOMB | Bay map (bow on the left, starboard row on top): lime loaded, yellow in the next salvo, gray used, red relay missing. Bombs loaded, salvo size, doors and how long they have been open, the reason the next drop would be refused or READY. Salvo size, DOOR, DROP and RELOAD buttons |
 | CAL | Ground or airborne, sample count, hover RPM here and at target, air density, lift constant, altitude trim, mass, level trim, learned thrust and drag, learned RCS turning and sideways strength, bow axis (learned or config). RECAL and RCS RESET |
@@ -130,25 +162,25 @@ Horizontal readouts (`GS`, `FWD`, `DRIFT`, `TRK`) use the change in world X/Z po
 
 **Hover calibration.** Clockwork blade thrust is `0.5·ρ·v_tip²·C_L·area`, and tip speed is proportional to RPM, so each corner's lift is `k·ρ(y)·RPM²`. Inflow from climbing is negligible next to tip speed. The flight loop measures vertical acceleration over 1-second windows against the force the four lift props are actually making and refines the single constant `k`. Hover RPM per corner at any height is then `sqrt(g / (k·ρ(h)))`, with `ρ` from `aero.getAirDensity`. The first guess is 430 RPM at sea level. On the ground, while asked to climb, RPM steps up until the hull lifts, so a low guess only costs a slower liftoff; a guess far above the real hover would launch the hull. It only learns in HOVER and CRUISE: a parked ship with the lift turning (STBY after DEBUG leaves it at 15 RPM) would otherwise learn that 15 RPM hovers. A calibration that puts the sea-level hover under `min_hover_rpm` (100) or over the lift cap is never believed: learning stops at those limits, and such a saved value is replaced by the first guess at start-up. The learned values are saved to `/ap3_cal.dat`.
 
-**Altitude.** The altitude error sets a vertical-speed command. That command is capped at 6 m/s up and 5 m/s down, and further limited near the target so the ship can still stop in time. A vertical-speed loop turns it into an acceleration, and the calibration turns that acceleration into one collective lift RPM. The lift props are pullers and never run below 0. Once settled within 0.5 blocks, the lift is held at the calibrated hover RPM (plus its altitude trim) and only recomputed if the hull drifts past 1 block or starts moving.
+**Altitude.** The altitude error sets a vertical-speed command. That command is capped at 6 m/s up and 5 m/s down, and further limited near the target so the ship can still stop in time. A vertical-speed loop turns it into an acceleration, and the calibration turns that acceleration into one collective lift RPM. The lift props are pullers and never run below 0. The lift stays closed-loop when settled: holding a fixed RPM left a 0.5–1% force error (whole RPM, write deadband) that walked the hull out to the release band and back, about 2 blocks peak to peak. The 10 RPM lift deadband thins the writes instead. Within 0.5 blocks and 0.4 m/s the phase reads HOLD.
 
 **Levelling.** The collective lift is spread over the four corners: bow port `L·(1+P−R)`, bow starboard `L·(1+P+R)`, stern port `L·(1−P−R)`, stern starboard `L·(1−P+R)`. `P` and `R` come from a PD loop on pitch and roll (positive pitch is nose up, positive roll is starboard down) plus an integral trim, up to 30% of `L`, that learns an off-centre load such as a half-empty bomb bay. CAL shows the trims. Levelling waits until the bow axis is confirmed, because with `frame.forward` wrong it would tip the hull further.
 
-**Speed.** The signed speed reference ramps toward a moving target in 12 s and stops 0.5 m/s inside either ±35 m/s cap. Negative targets drive astern without turning the bow around. Both pushers get the same RPM. Control uses normalised force (`RPM²`) with acceleration and drag learned in flight. A preview of at least 1.2 s tracks future reference and velocity, accounting for propeller spin and the force left while paced writes reduce RPM. Zero-speed requests reserve response time for braking, then rest the pushers. Pitch protection still holds thrust back when acceleration tips the nose past 6°. Cruise thrust is held only when measured and projected speeds are within 0.3 m/s of target, and released if either drifts 0.5 m/s. Its integral freezes while thrust is held. At zero speed with RCS enabled, fore/aft drift over 0.8 m/s wakes braking again; `rcs off` releases this station-keeping role.
+**Speed.** The signed speed reference ramps toward a moving target in 12 s and stops 0.5 m/s inside either ±35 m/s cap. Negative targets drive astern without turning the bow around. Both pushers get the same RPM. Control uses normalised force (`RPM²`) with acceleration and drag learned in flight; a learned or saved full-thrust acceleration under 0.3 m/s² is not believed (it is the learner's floor, not a measurement), so the 1.5 m/s² first guess is used and relearned. A preview of at least 1.2 s tracks future reference and velocity, accounting for propeller spin and the force left while paced writes reduce RPM. Zero-speed requests reserve response time for braking, then rest the pushers. Pitch protection still holds thrust back when acceleration tips the nose past 6°. Cruise thrust is held once measured and projected speeds are within 0.3 m/s of target, or measured speed has stayed within 0.3 m/s for two write intervals (paced writes could otherwise swing the pushers one 400 RPM step up and down every second), and released if either drifts 0.5 m/s. Its integral freezes while thrust is held. At zero speed with RCS enabled, fore/aft drift over 0.8 m/s wakes braking again; `rcs off` releases this station-keeping role.
 
 **Heading and sideslip.** The RCS only pulls; no motor ever reverses. For a turn force `u` and a sideways force `s`, each corner gets `max(0, …)` of: bow starboard `u+s`, stern port `u−s`, bow port `−u−s`, stern starboard `s−u`. A pure turn is a diagonal pair (right: bow starboard + stern port; left: bow port + stern starboard), a pure strafe is a same-side pair (both starboard corners pull to starboard), and blends stay proportional. One corner on its own mostly strafes the hull, because the Eureka helm's stabilisation resists the turn.
 
-The bearing error sets a yaw-rate command, and a PI loop on yaw rate gives a yaw acceleration. Commands are divided by the learned turning strength. The RCS cap is 4000 RPM; full-force turning and sideways strength guesses and bounds are four times their 2000 RPM values because force scales with RPM squared. Saved turning calibration rescales automatically using its recorded cap. Turning is learned from half-second windows with at least 0.75% of full turn force, preserving the old absolute learning threshold. The same absolute unconfirmed-axis probe is now 5% of full sway force. Turning strength stays between 0.4 and 200 deg/s² at full RCS. If the RCS pulls at full for 3 s and the heading is still off, SYS shows "RCS AT FULL: HEADING NOT HELD".
+The bearing error sets a yaw-rate command, at most 15°/s; the planned 0.15°/s² arrival deceleration means a 180° turn peaks near 9°/s. A PI loop on yaw rate gives a yaw acceleration. Commands are divided by the learned turning strength. The RCS cap is 4000 RPM; full-force turning and sideways strength guesses and bounds are four times their 2000 RPM values because force scales with RPM squared. Saved turning calibration rescales automatically using its recorded cap. Turning is learned from half-second windows with at least 0.75% of full turn force, preserving the old absolute learning threshold. The same absolute unconfirmed-axis probe is now 5% of full sway force. Turning strength stays between 0.4 and 200 deg/s² at full RCS. If the RCS pulls at full for 3 s and the heading is still off, SYS shows "RCS AT FULL: HEADING NOT HELD".
 
-Station keeping: a heading correction starts when the heading is more than 2° off (1° in CRUISE) or the hull turns faster than 0.5°/s, and stops within 0.5°. In between, the RCS holds the trim its integral learned (an off-centre thrust line, say) or rests. Sideways drift over 0.5 m/s, including drift the ship already had when the autopilot took over, is braked with the same-side pair until it is under 0.15 m/s; then the sideways force rests. The smallest RCS pulse is 100 RPM. Heading gets first call on the RCS.
+Station keeping: a heading correction starts when the heading is more than 2° off (1° in CRUISE and NAV TRANSIT) or the hull turns faster than 0.5°/s, and stops within 0.5°. In between, the RCS holds the trim its integral learned (an off-centre thrust line, say) or rests. The sideways brake tracks a sideways velocity target: 0, except in NAV HOLD where it translates the hull toward the point. An error over 0.5 m/s, including drift the ship already had when the autopilot took over, is braked with the same-side pair until it is under 0.15 m/s; then the sideways force rests. If braking for 10 s has made the error worse, the brake stops (wrong bow axis or corner labels); that window starts again while the hull turns, since a turn at speed swings the hull's momentum into sideslip. The smallest RCS pulse is 100 RPM. Heading gets first call on the RCS.
 
 Clockwork props don't follow the motor at once: the bearing changes spin by at most 32 RPM a tick, so 0 → 2000 RPM takes about 3.1 s, and spinning down takes as long. The flight loop models that spin. Every learner uses the force the props are really making, not the commanded RPM. The heading loop gets a lead for turn force still on its way, and the sideslip brake lets go early when the remaining spin will finish the job.
 
 **Motor pacing.** `setSpeed` runs on the server thread and stalls for a tick, so the flight loop only records the RPM each motor should have, and a writer task sends at most one write per tick:
 
-- each motor is written at most once a second. Changes under 5 RPM (lift), 15 (pushers) and 100 (RCS) are skipped, but a start or a stop is always written. One write changes a motor by at most 300 RPM (lift), 400 (pushers) or 2000 (RCS). Sign reversals pass through 0
+- each motor is written at most once a second. Changes under 10 RPM (lift), 15 (pushers) and 100 (RCS) are skipped, but a start or a stop is always written. One write changes a motor by at most 300 RPM (lift), 400 (pushers) or 2000 (RCS). Sign reversals pass through 0, and a remainder under half a step on the way there goes straight to 0 (884 → 484 → 0, not → 84 → 0)
 - the motors move in groups: the four lift corners, the four RCS corners and the two pushers. A group is written as one batch, motors turning down first, then motors turning up, on consecutive ticks with the values chosen when the batch started. Each member must be eligible in its planned tick slot before the batch starts, and its interval is checked again at the write. A due motor cannot pull a recently written partner into another update. Intervals run from the completion of each yielding call
-- a running batch goes first, then the lift, then the group with the largest need
+- a running batch goes first, then the lift, then the group with the largest need. A lift trim (no corner moving 20 RPM or more) does not jump the queue: it waits behind a due pusher or RCS batch
 - KILL bypasses all of it: every motor goes to 0 at once
 
 Changing an electric motor's speed detaches and reattaches its kinetic network. Downstream bearings still incur Create's flicker score: a running-speed change adds up to 10, it decays by 1 per game tick, and scores above 128 destroy blocks. Normal one-second pacing prevents our writes from accumulating that score. This does not protect against independent power starvation or redstone cycling: an underfed motor can stop and restart even with its commanded RPM unchanged. Check power delivery if bearings still stutter or break.
@@ -170,10 +202,13 @@ lua tests/test_install.lua
 lua tests/test_bombs.lua
 lua tests/test_mfd.lua
 lua tests/test_telemetry.lua
+lua tests/test_nav.lua
 python tests/cc/run.py <CraftOS-PC_console.exe>
 ```
 
-`tests/test_flight.lua` flies the real control modules against `tests/world.lua`, a hull model with the Clockwork thrust law per motor, air density, drag, RCS yaw, thrust misalignment, nose dip, corner lift torque, an off-centre load, prop lag and ground contact. It checks liftoff, climbing and holding at several heights from wrong calibrations, cruise to 30 m/s within 15 s, the 35 m/s cap, reverse-thrust braking, heading hold, the pitch limit, KILL and DEBUG on all ten motors, noisy telemetry, a wrong bow axis, wrong RCS labels with the RCS check, levelling under an off-centre load, and paired pushers.
+`tests/test_flight.lua` flies the real control modules against `tests/world.lua`, a hull model with the Clockwork thrust law per motor, air density, drag, RCS yaw, thrust misalignment, nose dip, corner lift torque, an off-centre load, prop lag and ground contact. It checks liftoff, climbing and holding at several heights from wrong calibrations, cruise to 30 m/s within 15 s, the 35 m/s cap, reverse-thrust braking, heading hold, the pitch limit, KILL and DEBUG on all ten motors, noisy telemetry, a wrong bow axis, wrong RCS labels with the RCS check, levelling under an off-centre load, and paired pushers. Cases 31–37 check the closed-loop altitude band with noisy velocity, the pusher-calibration floor, NAV HOLD translating onto a nearby point without turning, a 180° turn under the 15°/s cap, `goto` climbing first and ending at its bearing, descending last, and a route through a fly-through waypoint.
+
+`tests/test_nav.lua` checks the `goto`/`wp`/`route`/`rec` parser, waypoint-name rules, loading a saved waypoint file with bad entries, and which phase a leg starts in.
 
 `tests/test_install.lua` checks that the installer downloads every module `startup.lua` can load. `tests/test_bombs.lua` checks the bay layout, salvo selection, the interlocks, the trigger pulse and door timing, and the bay wrapper (save before fire, bad save files, a missing door relay, salvo sizes). `tests/test_mfd.lua` checks that every display keeps three different formats and every page is on screen at most once, whatever is pressed or loaded.
 
@@ -183,4 +218,4 @@ python tests/cc/run.py <CraftOS-PC_console.exe>
 
 `tests/test_telemetry.lua` checks stationary readings despite an accumulating physics velocity, signed and diagonal displacement, irregular sample times, bow changes and clock resets.
 
-`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path. Its `velocity` scenario holds the world position still while the velocity API increases, then moves forward, reverses and stops; the rendered PFD/AP/HSI readouts must follow world movement rather than that API.
+`tests/cc/run.py` boots the real `startup.lua` in [CraftOS-PC](https://www.craftos-pc.cc) with fake motors, relays and monitors. It presses MFD buttons, types terminal and keypad commands, refuses a drop below Y 200, drops at Y 210 and watches the relays, and checks the missing-peripheral path. Its `velocity` scenario holds the world position still while the velocity API increases, then moves forward, reverses and stops; the rendered PFD/AP/HSI readouts must follow world movement rather than that API. Its `nav` scenario saves a waypoint, flies `goto` 40 blocks east to bearing 90 until MENU → NAV shows ARRIVED, and records 3 s with `rec on`/`rec off`.

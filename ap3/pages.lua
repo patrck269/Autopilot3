@@ -13,7 +13,8 @@ local fmt = util.fmt
 local compass = util.compass
 local sin, cos, rad = math.sin, math.cos, math.rad
 
-local MODE_COLOR = { STBY = colors.lightGray, HOVER = colors.cyan, CRUISE = colors.lime, KILL = colors.red, DEBUG = colors.orange }
+local MODE_COLOR = { STBY = colors.lightGray, HOVER = colors.cyan, CRUISE = colors.lime, NAV = colors.magenta,
+  KILL = colors.red, DEBUG = colors.orange }
 
 local function stale(ctx)
   return ctx.st == nil or ctx.st.s == nil or ctx.age > 3
@@ -283,6 +284,10 @@ M.HSI = {
       local tx, ty = at(s.track, 0.5)
       c:put(tx, ty, "o", colors.magenta)
     end
+    if st.mode == "NAV" and st.nav and st.nav.last then
+      local wx, wy = at(st.nav.last.brg_to, 0.9)
+      c:put(wx, wy, "W", colors.lime)
+    end
     c:put(cx, cy - ry - 1 < a.y + 1 and a.y + 1 or cy - ry - 1, "v", colors.yellow)
     c:put(cx, cy, "^", colors.yellow)
     c:write(a.x, a.y + 1, "HDG " .. compass(s.hdg), colors.white)
@@ -296,6 +301,63 @@ M.HSI = {
     else
       c:write(a.x, fy + 2, pos, colors.lightGray)
     end
+  end,
+}
+
+------------------------------------------------------------------ NAV
+M.NAV = {
+  id = "NAV", title = "Navigation: waypoints, route, hold",
+  osb = function(ctx)
+    local b = mode_buttons(ctx, {})
+    local mode = ctx.st and ctx.st.mode
+    local armed = ctx.arm.route_clear and ctx.now - ctx.arm.route_clear < 3
+    b.T4 = { label = "NAV\nGO", lit = mode == "NAV", action = function(x) x.send("route_go") end }
+    b.T5 = { label = armed and "CONF\nCLEAR" or "CLR\nROUTE", warn = armed, action = function(x)
+      if armed then
+        x.arm.route_clear = nil
+        x.send("route_clear")
+      else
+        x.arm.route_clear = x.now
+      end
+    end }
+    b.L1 = step_button("SPD\n+5", "spd_step", 5)
+    b.L2 = step_button("SPD\n-5", "spd_step", -5)
+    return b
+  end,
+  draw = function(c, a, ctx)
+    header(c, a, "NAV", ctx)
+    if no_data(c, a, ctx) then return end
+    local st = ctx.st
+    local nav = st.nav or {}
+    local l = nav.last
+    local lines = {}
+    if st.mode == "NAV" and l then
+      local leg = l.leg or {}
+      local to = leg.name or (fmt(leg.x, 0) .. "," .. fmt(leg.z, 0))
+      lines[#lines + 1] = { "LEG " .. l.i .. "/" .. l.n .. "  " .. tostring(nav.phase), colors.white }
+      lines[#lines + 1] = { "TO " .. to .. "  Y " .. (leg.y and fmt(leg.y, 0) or "-")
+        .. "  BRG " .. (leg.brg and compass(leg.brg) or "-"), colors.cyan }
+      lines[#lines + 1] = { "DIST " .. fmt(l.d, 0) .. "  BRG " .. compass(l.brg_to) .. "  ETA " .. fmt(l.eta, 0) .. " s",
+        colors.white }
+      if nav.phase == "HOLD" or nav.phase == "ARRIVED" then
+        lines[#lines + 1] = { "HOLD FWD " .. fmt(l.along, 1) .. "  SIDE " .. fmt(l.side, 1), colors.lime }
+      end
+    else
+      lines[#lines + 1] = { "NO ACTIVE NAV", colors.lightGray }
+    end
+    lines[#lines + 1] = { "NAV SPD " .. fmt(nav.speed, 0), colors.white }
+    lines[#lines + 1] = { "ROUTE " .. tostring(nav.route_n or 0) .. " legs", colors.white }
+    lines[#lines + 1] = { "WPT " .. table.concat(nav.points or {}, " "), colors.lightGray }
+    local y = a.y + 2
+    for _, ln in ipairs(lines) do
+      for _, part in ipairs(wrap(ln[1], a.w)) do
+        if y < a.y + a.h - 1 then
+          c:write(a.x, y, part, ln[2])
+          y = y + 1
+        end
+      end
+    end
+    if ctx.reply then c:write(a.x, a.y + a.h - 1, ctx.reply, colors.lightGray) end
   end,
 }
 
@@ -635,6 +697,6 @@ M.UFC = {
   end,
 }
 
-M.LIST = { M.PFD, M.AP, M.HSI, M.ENG, M.BOMB, M.CAL, M.SYS, M.UFC }
+M.LIST = { M.PFD, M.AP, M.HSI, M.NAV, M.ENG, M.BOMB, M.CAL, M.SYS, M.UFC }
 
 return M

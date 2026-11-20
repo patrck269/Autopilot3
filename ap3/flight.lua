@@ -8,11 +8,16 @@ local actuators = require("ap3.actuators")
 local autopilot = require("ap3.autopilot")
 local bombbay = require("ap3.bombbay")
 local store = require("ap3.store")
+local recorder = require("ap3.recorder")
 
 local M = {}
 
 -- Commands handled by the bomb bay instead of the autopilot.
 local BAY = { doors = true, drop = true, salvo = true, reload = true }
+-- Flight recorder commands.
+local REC = { rec_on = true, rec_off = true }
+-- Commands that change the saved waypoints or route.
+local NAV_SAVE = { route_add = true, route_clear = true, wp_save = true, wp_del = true }
 
 -- opts = { link = link object }
 function M.run(cfg, opts)
@@ -47,7 +52,9 @@ function M.run(cfg, opts)
   bay:scan()
   bay:safe()
   local tel = telemetry.new(cfg, { ship = ship, aero = aero, clock = os.clock })
-  local ap = autopilot.new(cfg, saved, tel.rho_at(62), tel, { rcs_off = fs.exists(cfg.rcs_off_file) })
+  local ap = autopilot.new(cfg, saved, tel.rho_at(62), tel,
+    { rcs_off = fs.exists(cfg.rcs_off_file), nav = store.load(cfg.nav_file) })
+  local rec = recorder.new(cfg)
   local slug = ship.getSlug and ship.getSlug() or "ship"
 
   local last_s = tel.read()
@@ -71,6 +78,10 @@ function M.run(cfg, opts)
     local alerts = ap:alerts(s, now)
     for _, f in pairs(faults) do alerts[#alerts + 1] = f end
     for _, a in ipairs(bank:alerts(now)) do alerts[#alerts + 1] = a end
+    if rec.full then alerts[#alerts + 1] = "RECORDER FULL: " .. cfg.rec_file end
+    if rec.h then alerts[#alerts + 1] = "RECORDING" end
+    local names = ap.nav:names()
+    while #names > 10 do table.remove(names) end
     local tgt_alt = ap.tgt.alt or s.y
     local rho_t = tel.rho_at(tgt_alt)
     return {
@@ -84,12 +95,12 @@ function M.run(cfg, opts)
         rho = s.rho, mass = s.mass,
       },
       alt = {
-        phase = (ap.mode == "HOVER" or ap.mode == "CRUISE") and a.phase or "OFF",
+        phase = autopilot.FLYING[ap.mode] and a.phase or "OFF",
         k = a.k, hover_now = a:hover_rpm(s.rho), hover_tgt = a:hover_rpm(rho_t), rho_tgt = rho_t,
         grounded = a.grounded, samples = a.samples, saturated = a.saturated, integ = a.integ,
       },
       spd = {
-        phase = ap.mode == "CRUISE" and ap.spd.phase or (ap.mode == "HOVER" and "STOP" or "OFF"),
+        phase = (ap.mode == "CRUISE" or ap.mode == "NAV") and ap.spd.phase or (ap.mode == "HOVER" and "STOP" or "OFF"),
         v_ref = ap.spd.v_ref, A = ap.spd.A, drag35 = ap.spd:drag(35), pitch_hold = ap.spd.pitch_hold,
       },
       hdg = {
@@ -103,6 +114,14 @@ function M.run(cfg, opts)
       level = { pitch = ap.level.trim_pitch, roll = ap.level.trim_roll },
       motors = bank:snapshot(now),
       bomb = bay:status(now, s.y),
+      nav = {
+        phase = ap.nav.phase,
+        last = ap.nav.last,
+        speed = ap.nav.speed,
+        points = names,
+        route_n = #ap.nav.route,
+      },
+      rec = { on = rec.h ~= nil, rows = rec.rows, full = rec.full },
       rcs_off = ap.rcs_off,
       alerts = alerts,
       warnings = warnings,
@@ -117,8 +136,16 @@ function M.run(cfg, opts)
     local ok, text
     if BAY[msg.c] then
       ok, text = bay:command(msg.c, msg.v, last_s, os.clock())
+    elseif REC[msg.c] then
+      if msg.c == "rec_on" then
+        ok, text = rec:start()
+      else
+        rec:stop()
+        ok, text = true, "recording stopped (" .. rec.rows .. " rows)"
+      end
     else
       ok, text = ap:command({ c = msg.c, v = msg.v }, last_s)
+      if ok and NAV_SAVE[msg.c] then store.save(cfg.nav_file, ap.nav:saved()) end
       if ok and msg.c == "mode" and msg.v == "KILL" then bank:kill() end
       if ok and msg.c == "rcs_apply" then
         -- The layout picks which peripheral drives which corner: save it and
@@ -158,6 +185,7 @@ function M.run(cfg, opts)
           last_s = s
           local out = ap:step(s, now, dt, bank)
           for _, ch in ipairs(actuators.ORDER) do bank:set(ch, out[ch]) end
+          rec:sample(now, s, ap, bank)
         else
           faults.telemetry = "SHIP TELEMETRY: " .. tostring(s)
         end

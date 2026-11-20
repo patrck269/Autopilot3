@@ -1,4 +1,5 @@
 -- Typed commands for the terminal.
+local nav = require("ap3.nav")
 local M = {}
 
 M.HELP = {
@@ -20,10 +21,31 @@ M.HELP = {
   "drop        drop one salvo (Y>=200, doors open)",
   "reload      mark every bomb loaded",
   "rcs off|on  release RCS to the helm / take it back",
+  "goto X Z [Y] [BRG]  fly there, hold, turn (or goto <name>)",
+  "wp save|del <name>, wp list  named waypoints",
+  "route add X Z [Y] [BRG]|<name>  add a leg (BRG = stop)",
+  "route go|clear|list  fly / empty / show the route",
+  "rec on|off  flight recorder (/ap3_rec.csv)",
 }
 
 local MODES = { hover = "HOVER", h = "HOVER", cruise = "CRUISE", c = "CRUISE", stby = "STBY", standby = "STBY", off = "STBY", kill = "KILL", debug = "DEBUG" }
 local VALUES = { alt = "alt", a = "alt", y = "alt", brg = "brg", b = "brg", hdg = "brg", spd = "spd", s = "spd", speed = "spd" }
+
+-- A destination from words[i..]: X Z [Y] [BRG] or a waypoint name.
+-- Returns the operand or nil.
+local function destination(words, i)
+  local x, z = tonumber(words[i]), tonumber(words[i + 1])
+  if x and z then
+    local y, brg = words[i + 2], words[i + 3]
+    local yn, bn = tonumber(y), tonumber(brg)
+    if (y ~= nil and yn == nil) or (brg ~= nil and bn == nil) or words[i + 4] ~= nil then return nil end
+    return { x = x, z = z, y = yn, brg = bn }
+  end
+  if words[i] ~= nil and words[i + 1] == nil and tonumber(words[i]) == nil then
+    return { name = words[i] }
+  end
+  return nil
+end
 
 -- Returns a command { c =, v = }, or nil and an error, or "help".
 function M.parse(line)
@@ -41,6 +63,36 @@ function M.parse(line)
     if words[2] == "on" then return { c = "rcs_on" } end
     if words[2] == "reset" then return { c = "rcs_reset" } end
     return nil, "rcs check | rcs apply | rcs reset | rcs off | rcs on"
+  end
+  if head == "goto" then
+    local v = destination(words, 2)
+    if v == nil then return nil, "goto X Z [Y] [BRG] | goto <name>" end
+    return { c = "goto", v = v }
+  end
+  if head == "route" then
+    local sub = words[2]
+    if sub == nil or sub == "list" then return { c = "route_list" } end
+    if sub == "add" then
+      local v = destination(words, 3)
+      if v == nil then return nil, "route add X Z [Y] [BRG] | route add <name>" end
+      return { c = "route_add", v = v }
+    end
+    if sub == "clear" then return { c = "route_clear" } end
+    if sub == "go" then return { c = "route_go" } end
+    return nil, "route add | route clear | route go | route list"
+  end
+  if head == "wp" then
+    local sub, name = words[2], words[3]
+    if sub == "list" then return { c = "wp_list" } end
+    if (sub == "save" or sub == "del") and name ~= nil then
+      if not nav.valid_name(name) then return nil, nav.NAME_ERROR end
+      return { c = "wp_" .. sub, v = name }
+    end
+    return nil, "wp save <name> | wp del <name> | wp list"
+  end
+  if head == "rec" then
+    if words[2] == "on" or words[2] == "off" then return { c = "rec_" .. words[2] } end
+    return nil, "rec on | rec off"
   end
   if head == "doors" then
     if words[2] == "open" or words[2] == "close" then return { c = "doors", v = words[2] } end
