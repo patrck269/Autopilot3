@@ -46,7 +46,7 @@ Several ported 2.0 checks passed by luck of phase rather than by design.
 
 The approved plan set the hover first guess to 800 RPM per corner. A 300 RPM test hull with that guess launched and was still climbing at Y 7304 after 120 s. The descent command never asked for less than about 506 RPM, and learning stops above 15 m/s. AP2's 430 RPM guess keeps that case under 6 blocks of overshoot (`be7c93b`).
 
-**Next time:** run a plan's numbers through the simulation before shipping them. If a value only moves the result a little, the plan was fine; if it moves it a lot, stop and check with Patrick.
+**Next time:** run a plan's numbers through the simulation before shipping them. If a value only moves the result a little, the plan was fine; if it moves it a lot, stop and ask before changing it.
 
 ## 5. Scaling a limit changes the loop
 
@@ -54,7 +54,7 @@ Doubling the caps (`37c0039`) gave four times the force (force goes with RPM²).
 
 | Measurement | Before retune | After retune |
 |---|---|---|
-| Cruise peak at a 30 m/s target | 36.6 m/s | 31.2 m/s |
+| Cruise peak at a 30 m/s target | 33.7 m/s | 31.2 m/s |
 | Nose dip | 15.3° | within the 8° limit |
 | Wrong-bow runaway | about 60 m/s | under 18 m/s |
 
@@ -79,7 +79,7 @@ Still open: from a plain hover, cruise overshoots by 1.7–3.1 m/s. The fix is a
 ## 7. Operations
 
 - **Line endings.** `git archive` applies `core.autocrlf`, so files deployed straight from it did not match the commit hashes. Deploy with `git -c core.autocrlf=false archive`.
-- **Backups.** The server's backup mod deletes a full backup that is cut short. When asked to restore at 18:15, the 18:12 full backup was still being written, so I waited about 2 minutes for it to finish before stopping the server. Its incremental backups are "changed since the last full", so a restore means the full backup plus the latest increment.
+- **Backups.** The server's backup mod deletes a full backup that is cut short. When asked to restore at 18:15, the full backup started at 17:57 was still being written, so I waited about 2 minutes for it to finish before stopping the server. Its incremental backups are "changed since the last full", so a restore means the full backup plus the latest increment.
 - **Undo copies.** Before any destructive step, keep the old state where it can be undone:
   - the world as `RIBBED_pre-restore_…`
   - computer 3's files as `pre-51c1070/`
