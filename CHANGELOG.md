@@ -6,6 +6,7 @@
 - Enforce each motor's write interval within coordinated batches and measure it from call completion. A due motor no longer forces recently written partners to update; KILL still bypasses pacing. Adjust the yaw lead to the enforced cadence.
 - Invert bomb-door output: powered closes, unpowered opens. Startup closes the doors without firing any bomb triggers; manual and timed closing use the same polarity.
 - Add motor-cadence, bearing-flicker, cruise-arrival and door-polarity regressions.
+- Reduce the door-opening drop lockout from three seconds to one second; salvo spacing and automatic closing delays are unchanged.
 
 ## 3.1.0
 

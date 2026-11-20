@@ -61,7 +61,8 @@ local b = bombs.new()
 A.eq(bombs.check(b, 0, 250, true, cfg), "doors closed", "closed check")
 bombs.open_doors(b, 0, relays[59], cfg)
 for _, event in ipairs(log) do A.eq(event.value, false, "door open removes signal") end
-A.eq(bombs.check(b, 1, 250, true, cfg), "doors opening 2s", "settle check")
+A.eq(bombs.check(b, 0.999, 250, true, cfg) ~= nil, true, "drop blocked before one second")
+A.eq(bombs.check(b, 1, 250, true, cfg), nil, "drop unlocked at one second")
 A.eq(bombs.check(b, 3, 199.5, true, cfg), "below 200 (Y 199)", "altitude check")
 A.eq(bombs.check(b, 3, 200, true, cfg), nil, "minimum altitude")
 
@@ -143,7 +144,7 @@ do
   local bay, calls, files = bay_world()
   A.eq(bay:command("doors", "open", { y = 250 }, 0), true, "bay doors open")
   local before = #calls
-  local ok, text = bay:command("drop", nil, { y = 250 }, 3)
+  local ok, text = bay:command("drop", nil, { y = 250 }, 1)
   A.eq(ok, true, "bay drop")
   A.eq(text, "dropped 25", "bay drop text")
   local saved_at, fired_at

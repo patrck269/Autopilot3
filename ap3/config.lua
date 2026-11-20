@@ -168,7 +168,7 @@ return {
     door_open_signal = false, -- no signal opens; a signal closes the doors
     bomb_min_altitude = 200,
     bomb_min_interval = 5,
-    door_settle = 3,
+    door_settle = 1,
     door_close_delay = 10,
     bomb_pulse = 0.5,
     sizes = { 1, 3, 5, 10, "all" },

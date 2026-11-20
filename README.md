@@ -89,7 +89,7 @@ The bay holds 46 bombs in two rows of 23. Bay row 1 is at the bow. The port row 
 
 A drop is refused, with the reason on the BOMB page and in the reply, when:
 
-- the door relay is missing, the doors are closed, or they opened less than 3 s ago
+- the door relay is missing, the doors are closed, or they opened less than 1 s ago
 - the ship is below Y 200
 - the last salvo was less than 5 s ago
 - a drop is still in progress

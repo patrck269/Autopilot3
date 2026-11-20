@@ -279,7 +279,7 @@ local function both_script()
   press("monitor_5", "B2") -- BOMB
   check(shows("monitor_5", "BOMB BAY"), "monitor_5 back on BOMB")
   type_line("doors open")
-  sleep(4) -- doors settle
+  sleep(1.2) -- one-second door lockout, plus command delivery
   check(#changes(59, false) > 0, "doors relay 59 switched off to open")
   type_line("drop")
   sleep(0.6)
