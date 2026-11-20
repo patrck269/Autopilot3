@@ -15,6 +15,7 @@ Rebuilt on the Autopilot 2.0 codebase. This replaces the 1.0-derived modes and U
 - MFD format slots stay distinct: picking a page an MFD already held in another slot made a duplicate, and pages dropped out of every slot.
 - MFD pages fit narrow monitors (2 blocks wide): drawing is clipped to the content area, AP/CAL/PFD/HSI use extra lines, BOMB stands the bay map upright on a tall one.
 - `rcs reset` (or CAL: RCS RESET) forgets the learned RCS turning and sideways strength.
+- A monitor reached under two names (touching the computer and on the wired network) carries one MFD instead of two drawing over each other.
 - Motor caps doubled to 5500 RPM lift, 4000 RCS and 3000 pushers. Write steps retuned to 600 RPM for lift and pushers (about what the props can follow in a second) and 2000 for RCS. The pusher loop asks for at most 1.5 m/s² beyond its ramp, and it is held to 25% force until the bow axis is confirmed. The first guesses for thrust and RCS strength are scaled for the higher caps.
 
 ## 3.0.0

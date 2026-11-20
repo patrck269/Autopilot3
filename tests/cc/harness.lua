@@ -50,6 +50,7 @@ local function fake_monitor(name, mw, mh)
     setBackgroundColour = function() end, setTextColour = function() end,
     clear = blank, setCursorBlink = function() end,
     setCursorPos = function(x, y) m.x, m.y = x, y end,
+    getCursorPos = function() return m.x, m.y end,
     write = function(t) put(tostring(t)) end,
     blit = function(t) put(t) end,
     isColor = function() return true end, isColour = function() return true end,
@@ -92,6 +93,9 @@ for id = 13, 59 do
 end
 fake.back = { "modem", modem }
 for name, m in pairs(monitors) do fake[name] = { "monitor", m.obj } end
+-- monitor_4 also reached under a second name, like a monitor touching the
+-- computer that is also wired to a modem: it must carry one MFD, not two.
+fake.monitor_9 = { "monitor", monitors.monitor_4.obj }
 
 local held_back = {}
 if scenario == "missing" then
@@ -239,6 +243,7 @@ local function both_script()
   check(shows("monitor_7", "ENGINE"), "monitor_7 shows ENG")
   check(shows("monitor_7", "LFT BP"), "ENG lists the lift motors")
   check(shows("monitor_5", "LOADED 46/46"), "BOMB shows a full bay")
+  check(not shows("monitor_4", "SYSTEM"), "monitor_4 reached under two names carries one MFD")
   dump("boot")
 
   press("monitor_4", "B5") -- SWAP 4 <-> 5
