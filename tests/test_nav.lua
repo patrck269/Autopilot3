@@ -77,4 +77,24 @@ none, err = cmdline.parse("dock left 5")
 A.eq(none, nil, "unknown dock direction is refused")
 A.eq(err, "dock fwd|aft|port|stbd|up|down <blocks> | dock turn <deg> | dock here", "dock usage")
 
+-- Help pages: a 19-row terminal shows 15 help lines at a time.
+local page_cmd, page = cmdline.parse("help 2")
+A.eq(page_cmd, "help", "help with a page")
+A.eq(page, 2, "help page number")
+local n = #cmdline.HELP
+local lines, top, shown, pages = cmdline.help_view(1, 15)
+A.eq(#lines, math.min(15, n), "the first page fills the view")
+A.eq(top, 1, "page 1 starts at the first line")
+A.eq(pages, math.ceil(n / 15), "page count")
+A.eq(shown, 1, "page 1 is page 1")
+lines, top, shown = cmdline.help_view(16, 15)
+A.eq(lines[#lines], cmdline.HELP[n], "the last page ends on the last line")
+A.eq(#lines, math.min(15, n), "the last page is full: it starts earlier instead of leaving rows empty")
+A.eq(shown, pages, "the last page reads as the last page")
+lines, top = cmdline.help_view(-5, 15)
+A.eq(top, 1, "scrolling above the top stops at line 1")
+for i, l in ipairs(cmdline.HELP) do
+  A.eq(#l <= 51, true, "help line " .. i .. " fits the 51-column terminal")
+end
+
 print("ALL NAV CHECKS PASSED")

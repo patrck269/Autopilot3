@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `help` pages to fit the terminal: up/down, PgUp/PgDn or the mouse wheel scroll it, `help 2` opens page 2, Enter closes it. Every help line fits the 51-column screen.
 - Caps raised for the 3.0 ships' small props: pushers ±10000 RPM, RCS 15000 RPM (write steps 900 and 7500). Measured in game: both pushers at 10000 RPM give about 32 m/s². RCS strength guesses, bounds and force-share thresholds keep their absolute forces; saved pusher and RCS calibrations rescale with the cap (`thrust_cap` is now saved).
 - Eureka's helm brake (`linearStabilizeMaxAntiVelocity`) is turned off on the server: it cancelled any thrust under about 0.84 m/s². With it off the hull has almost no drag, so HOVER now holds the point where the ship came to rest (pushers fore/aft, RCS sideways), and DOCK moves from HOVER start from that point.
 - Speed control for strong, slowly spinning pushers on a near-frictionless hull: first guesses from the measured hull, at most 4 m/s² asked beyond drag, a jerk-limited reference that reaches its target in 14 s, a feed that falls a whole thrust ramp-down before arrival, a 0.5 m/s² integral, and only a 2% probe thrust until the bow axis is confirmed. The sideways brake engages at 0.2 m/s; position hold uses half the gain and 2 m/s fore/aft.

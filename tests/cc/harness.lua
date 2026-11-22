@@ -447,6 +447,19 @@ local function velocity_script()
   sleep(1)
   near("monitor_4", "FWD", 0)
   near("monitor_6", "GS", 0)
+
+  -- Help pages on the terminal.
+  type_line("help")
+  check(term_shows("HELP  page 1/") and term_shows("alt <Y>"), "help opens on page 1", term_text())
+  os.queueEvent("key", keys.pageDown, false)
+  sleep(0.5)
+  check(term_shows("dock fwd|aft") and not term_shows("alt <Y>"), "PgDn shows the last page", term_text())
+  os.queueEvent("key", keys.up, false)
+  sleep(0.5)
+  type_line("")
+  check(term_shows("AUTOPILOT 3.0 COMMAND CENTER"), "Enter closes help", term_text())
+  type_line("help 2")
+  check(term_shows("dock fwd|aft"), "help 2 opens the second page", term_text())
 end
 
 local function nav_script()
@@ -521,6 +534,19 @@ local function nav_script()
   check(not fs.exists("/ap3_host.in") and log:find("wp list -> OK waypoints: home", 1, true) ~= nil
     and log:find("goto 10 -> REJECTED goto X Z", 1, true) ~= nil, "host inbox commands are run and answered", log)
   check(fs.exists("/ap3_host.status"), "host inbox keeps a status snapshot")
+end
+
+-- The command center draws into this window, so the terminal can be read.
+local tw, th = term.getSize()
+local twin = window.create(term.current(), 1, 1, tw, th)
+term.redirect(twin)
+function term_text()
+  local rows = {}
+  for y = 1, th do rows[y] = (twin.getLine(y)) end
+  return table.concat(rows, "\n")
+end
+function term_shows(text)
+  return term_text():find(text, 1, true) ~= nil
 end
 
 local scripts = { both = both_script, missing = missing_script, velocity = velocity_script, nav = nav_script }

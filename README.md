@@ -94,7 +94,7 @@ If the sideways brake runs for 10 s and the drift has grown, it stops and SYS sh
 | `rec on` / `rec off` | — | Flight recorder (see Flight recorder) |
 | `dock fwd 5` (`aft`, `port`, `stbd`, `up`, `down`), `dock turn -10`, `dock here` | DOCK: STEP 1/2/5/10, FWD/AFT/PORT/STBD, UP/DOWN, BRG −/+, HOLD HERE | Docking: hold a point N blocks along one ship axis, or turn N degrees in place (see Docking) |
 
-Type `help` for the list. If the computer reboots while the lift is spinning, it takes over in HOVER at the current altitude (NAV never resumes on its own).
+Type `help` for the list. It pages to fit the terminal: up/down, PgUp/PgDn or the mouse wheel scroll it, `help 2` opens page 2 and Enter closes it. If the computer reboots while the lift is spinning, it takes over in HOVER at the current altitude (NAV never resumes on its own).
 
 ## Navigation
 

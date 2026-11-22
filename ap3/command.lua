@@ -86,7 +86,11 @@ function M.run(cfg, opts)
   end
 
   local prompt = cmdline.prompt()
-  local help = false
+  local help_top = nil -- first help line on screen; nil while help is closed
+  local function help_size()
+    local _, h = term.getSize()
+    return h - 4 -- title row, footer row, reply row and prompt row
+  end
 
   local function draw_terminal()
     local w, h = term.getSize()
@@ -96,6 +100,18 @@ function M.run(cfg, opts)
       term.setCursorPos(1, y)
       term.setTextColor(color or colors.white)
       term.write(text:sub(1, w))
+    end
+    if help_top then
+      local lines, top, page, pages = cmdline.help_view(help_top, help_size())
+      help_top = top
+      line(1, string.format("HELP  page %d/%d", page, pages), colors.yellow)
+      for i, hl in ipairs(lines) do line(1 + i, hl, colors.lightGray) end
+      line(h - 2, "up/down, PgUp/PgDn, wheel: scroll  Enter: close", colors.gray)
+      line(h - 1, ctx.reply or "", colors.lightGray)
+      line(h, "> " .. prompt.text, colors.white)
+      term.setCursorPos(math.min(w, 3 + #prompt.text), h)
+      term.setCursorBlink(true)
+      return
     end
     line(1, "AUTOPILOT 3.0 COMMAND CENTER", colors.yellow)
     local st = ctx.st
@@ -138,12 +154,7 @@ function M.run(cfg, opts)
     for _, wmsg in ipairs(warns) do
       if y < h - 2 then line(y, wmsg, colors.orange); y = y + 1 end
     end
-    if help then
-      for _, hl in ipairs(cmdline.HELP) do
-        if y < h - 1 then line(y, hl, colors.lightGray); y = y + 1 end
-      end
-    end
-    line(h - 1, ctx.reply or "type help for commands", colors.lightGray)
+    line(h - 1, ctx.reply or "type help for commands (help 2 for page 2)", colors.lightGray)
     line(h, "> " .. prompt.text, colors.white)
     term.setCursorPos(math.min(w, 3 + #prompt.text), h)
     term.setCursorBlink(true)
@@ -184,13 +195,21 @@ function M.run(cfg, opts)
         build()
         mgr:draw_all(ctx)
       end
+    elseif help_top and (ev[1] == "mouse_scroll"
+      or (ev[1] == "key" and (ev[2] == keys.up or ev[2] == keys.down or ev[2] == keys.pageUp or ev[2] == keys.pageDown))) then
+      local size = help_size()
+      local step = ev[1] == "mouse_scroll" and ev[2]
+        or ev[2] == keys.up and -1 or ev[2] == keys.down and 1
+        or ev[2] == keys.pageUp and -size or size
+      help_top = help_top + step
+      draw_terminal()
     else
       local line = prompt.handle(ev)
       if line then
         local cmd, err = cmdline.parse(line)
-        help = false
+        help_top = nil
         if cmd == "help" then
-          help = true
+          help_top = ((err or 1) - 1) * help_size() + 1
         elseif cmd then
           ctx.send(cmd.c, cmd.v)
         elseif err ~= "" then

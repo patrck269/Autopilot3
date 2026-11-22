@@ -5,8 +5,8 @@ local M = {}
 M.HELP = {
   "alt <Y>     target altitude (world Y)",
   "brg <deg>   target bearing (0=N 90=E)",
-  "spd <m/s>   target speed (-35 to 35; negative backs up)",
-  "hover       hold altitude, stop, hold heading",
+  "spd <m/s>   target speed -35..35 (negative: astern)",
+  "hover       hold altitude, position and heading",
   "cruise      altitude + bearing + speed",
   "stby        autopilot off (lift left as is)",
   "kill        cut every motor to 0",
@@ -21,13 +21,27 @@ M.HELP = {
   "drop        drop one salvo (Y>=200, doors open)",
   "reload      mark every bomb loaded",
   "rcs off|on  release RCS to the helm / take it back",
-  "goto X Z [Y] [BRG]  fly there, hold, turn (or goto <name>)",
+  "goto X Z [Y] [BRG]  fly there and hold (or <name>)",
   "wp save|del <name>, wp list  named waypoints",
-  "route add X Z [Y] [BRG]|<name>  add a leg (BRG = stop)",
+  "route add X Z [Y] [BRG]|<name>  add leg (BRG: stop)",
   "route go|clear|list  fly / empty / show the route",
   "rec on|off  flight recorder (/ap3_rec.csv)",
-  "dock fwd|aft|port|stbd|up|down N, dock turn N, dock here",
+  "dock fwd|aft|port|stbd|up|down N, turn N, here",
 }
+
+-- The help lines that fit a view of size rows starting at line top, with top
+-- clamped so the view never runs past the end. Returns the lines, the
+-- clamped top, the page shown and the page count.
+function M.help_view(top, size)
+  size = math.max(1, size)
+  local n = #M.HELP
+  top = math.max(1, math.min(math.floor(top or 1), math.max(1, n - size + 1)))
+  local lines = {}
+  for i = top, math.min(n, top + size - 1) do lines[#lines + 1] = M.HELP[i] end
+  local pages = math.ceil(n / size)
+  local page = top + size - 1 >= n and pages or math.floor((top - 1) / size) + 1
+  return lines, top, page, pages
+end
 
 local MODES = { hover = "HOVER", h = "HOVER", cruise = "CRUISE", c = "CRUISE", stby = "STBY", standby = "STBY", off = "STBY", kill = "KILL", debug = "DEBUG" }
 local VALUES = { alt = "alt", a = "alt", y = "alt", brg = "brg", b = "brg", hdg = "brg", spd = "spd", s = "spd", speed = "spd" }
@@ -48,13 +62,14 @@ local function destination(words, i)
   return nil
 end
 
--- Returns a command { c =, v = }, or nil and an error, or "help".
+-- Returns a command { c =, v = }, or nil and an error, or "help" and the
+-- page asked for (or nil).
 function M.parse(line)
   local words = {}
   for w in string.gmatch(string.lower(line or ""), "%S+") do words[#words + 1] = w end
   local head = words[1]
   if head == nil then return nil, "" end
-  if head == "help" or head == "?" then return "help" end
+  if head == "help" or head == "?" then return "help", tonumber(words[2]) end
   if MODES[head] then return { c = "mode", v = MODES[head] } end
   if head == "sync" or head == "recal" or head == "drop" or head == "reload" then return { c = head } end
   if head == "rcs" then
