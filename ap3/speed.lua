@@ -85,9 +85,10 @@ function M:set_target(target, v_now, min_rate)
   local limit = self.c.max - self.c.cap_margin
   self.target = util.clamp(target or 0, -limit, limit)
   local gap = math.abs(self.target - self.v_ref)
-  -- A stop must finish braking, not merely finish the reference ramp.
-  local duration = self.target == 0 and math.max(self.c.ramp_time - self.c.thrust_lag, self.c.thrust_lag)
-    or self.c.ramp_time
+  -- A stop must finish braking, not merely finish the reference ramp: its
+  -- reference reaches 0 in stop_time, leaving the rest of the 15 s for the
+  -- thrust to wind down.
+  local duration = self.target == 0 and self.c.stop_time or self.c.ramp_time
   self.rate = math.max(gap / duration, self.c.min_ramp, min_rate or 0)
 end
 
@@ -161,11 +162,16 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
     feed = 0
   end
   local accel = feed + c.vel_gain * err + self.integ
-  -- Ask for at most max_accel beyond drag: strong pushers driven to full
-  -- take many seconds to spin up and down again, and overshoot.
+  -- Ask for at most max_accel beyond drag (max_brake while a stop slows the
+  -- hull): strong pushers driven to full take many seconds to spin up and
+  -- down again, and overshoot.
+  local up = math.min(c.max_accel, self.accel_cap or math.huge)
+  if self.target == 0 and accel ~= 0 and util.sign(accel) ~= util.sign(v) and math.abs(v) > 0.5 then
+    up = math.min(c.max_brake, self.accel_cap or math.huge)
+  end
   self.limited = 0
-  if accel > c.max_accel then accel = c.max_accel; self.limited = 1 end
-  if accel < -c.max_accel then accel = -c.max_accel; self.limited = -1 end
+  if accel > up then accel = up; self.limited = 1 end
+  if accel < -up then accel = -up; self.limited = -1 end
   local f = (accel + self:drag(v)) / self.A
   self.saturated = 0
   local top = fmax or 1
@@ -217,8 +223,11 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
   -- Inside hold_band for two write intervals also captures: the paced
   -- writes can otherwise swing the pushers one slew step up and down every
   -- write around the target, and the preview never settles.
+  -- Position hold (accel_cap set) never holds: its targets are a few tenths
+  -- of a m/s, inside hold_band of a hull at rest, so it would never move.
   local projected = v + net_accel * horizon
-  if self.target ~= 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold then
+  if self.target ~= 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold
+    and not self.accel_cap then
     local inside = math.abs(v - self.target) < c.hold_band
     self.in_band = inside and (self.in_band or 0) + dt or 0
     if self.held_f then

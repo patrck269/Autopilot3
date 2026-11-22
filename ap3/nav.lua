@@ -307,7 +307,7 @@ function M:step(s, now)
       end
     end
     local spd, sway = M.translate(c, self, leg.x, leg.z, s)
-    cmd = { alt = alt, brg = self.hold_brg, spd = spd, rate = c.hold_accel, side = sway }
+    cmd = { alt = alt, brg = self.hold_brg, spd = spd, rate = c.hold_accel, side = sway, hold = true }
     if self.phase == "HOLD" then
       local settled = d <= c.hold_engage and math.abs(util.wrap180(self.hold_brg - s.hdg)) <= 2
         and math.abs(s.y - alt) <= 1.5

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Dock and hover position hold no longer swing fore and aft. In game a dock hold swung ±12 blocks at ±3 m/s: it asked the pushers for up to 4 m/s², and those RPMs take seconds to reverse (fitted about 25 RPM a tick). Hold now asks for at most 0.3 m/s² (`nav.hold_max_accel`), steers 2.5 s ahead (`nav.hold_lead`, was 1.5) and never freezes pusher thrust near its small target speeds. HOVER takes a hold point only once the bow axis is confirmed.
+- Lift cap doubled to 5500 RPM per corner. Nothing else scales with it: the hover calibration now also believes a sea-level hover up to 5500 RPM, and "ELEVATION AT RPM CAP" shows only past it.
+- Stops keep their own 10.8 s reference ramp (`speed.stop_time`) now that cruise ramps take 14 s, and may brake at 5 m/s² (`speed.max_brake`): a 35 → 0 stop ends in about 14.5 s in the simulated hull.
 - `help` pages to fit the terminal: up/down, PgUp/PgDn or the mouse wheel scroll it, `help 2` opens page 2, Enter closes it. Every help line fits the 51-column screen.
 - Caps raised for the 3.0 ships' small props: pushers ±10000 RPM, RCS 15000 RPM (write steps 900 and 7500). Measured in game: both pushers at 10000 RPM give about 32 m/s². RCS strength guesses, bounds and force-share thresholds keep their absolute forces; saved pusher and RCS calibrations rescale with the cap (`thrust_cap` is now saved).
 - Eureka's helm brake (`linearStabilizeMaxAntiVelocity`) is turned off on the server: it cancelled any thrust under about 0.84 m/s². With it off the hull has almost no drag, so HOVER now holds the point where the ship came to rest (pushers fore/aft, RCS sideways), and DOCK moves from HOVER start from that point.

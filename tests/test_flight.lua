@@ -860,5 +860,26 @@ do
     string.format("off %.2f", flat(sim, pt.x + 5, pt.z)))
 end
 
+print("40. Dock hold settles when the props spin up slower than modelled")
+-- In game (2026-11-22) a dock hold swung +-12 blocks at +-3 m/s for minutes:
+-- the props there reach a new RPM at about 25 RPM a tick, and asking for
+-- up to max_accel kept them reversing too late. The old tuning diverged in
+-- this model at 20 RPM a tick.
+for _, slew in ipairs({ 20, 16 }) do
+  local sim = plant.new({ y = 200, lift = 900, psi = 0, prop_slew = slew,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", 200)
+  sim.cmd("mode", "HOVER")
+  sim.run(20)
+  local x, z = sim.w.x, sim.w.z - 5
+  sim.w.vz = -3.5 -- already moving 3.5 m/s ahead when the move starts
+  local ok, msg = sim.ap:command({ c = "dock", v = { move = "fwd", n = 5 } }, sim.s)
+  assert(ok, msg)
+  local worst, t0 = 0, sim.w.t
+  sim.run(150, function(s2) if s2.w.t - t0 > 90 then worst = math.max(worst, flat(s2, x, z)) end end)
+  check(worst <= 2.5, slew .. " RPM a tick: within 2.5 blocks of the point after 90 s",
+    string.format("worst %.2f", worst))
+end
+
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
 os.exit(failures == 0 and 0 or 1)

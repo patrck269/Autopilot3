@@ -94,6 +94,7 @@ function M:engage(mode, s)
       self.spd:reset(s.v_fwd)
       self.level:reset()
     end
+    self.spd.accel_cap = nil
     if mode == "CRUISE" then
       self.spd:set_target(self.tgt.spd, s.v_fwd)
     else
@@ -105,12 +106,13 @@ end
 
 -- HOVER holds the point where the hull came to rest: with the helm's brake
 -- off a hull with almost no drag drifts otherwise. The point is taken once
--- ground speed is under nav.hover_capture; the RCS check, 'rcs off' and a
--- new mode drop it.
+-- ground speed is under nav.hover_capture and the bow axis is confirmed
+-- (translation along a wrong axis runs away); the RCS check, 'rcs off' and
+-- a new mode drop it.
 function M:hover_hold(s)
   local c = self.cfg.nav
   local spd, side = 0, 0
-  if self.rcs_off then
+  if self.rcs_off or not (self.motion.frame_ok or self.bow_learned) then
     self.hover_pt = nil
   else
     if not self.hover_pt and s.gs < c.hover_capture then
@@ -121,13 +123,18 @@ function M:hover_hold(s)
       spd, side = nav.translate(c, self.hover_state, self.hover_pt.x, self.hover_pt.z, s)
     end
   end
-  self:speed_to(spd, c.hold_accel, s)
+  -- Until a point is held this is a plain stop: full braking, which also
+  -- shows the bow axis.
+  self:speed_to(spd, c.hold_accel, s, self.hover_pt ~= nil)
   self.sway_target = side
 end
 
 -- Set the forward speed target, re-ramping only when it changes (set_target
--- plans the ramp from the reference's gap to it).
-function M:speed_to(spd, rate, s)
+-- plans the ramp from the reference's gap to it). hold: the target comes
+-- from position hold, so ask for at most nav.hold_max_accel: big pusher
+-- RPMs take seconds to reverse and keep a hold swinging past its point.
+function M:speed_to(spd, rate, s, hold)
+  self.spd.accel_cap = hold and self.cfg.nav.hold_max_accel or nil
   local sent = self.spd_sent
   if not sent or sent.spd ~= spd or sent.rate ~= rate then
     self.spd:set_target(spd, s.v_fwd, rate)
@@ -449,7 +456,7 @@ function M:step(s, now, dt, bank)
   if self.mode == "NAV" then
     local cmd = self.nav:step(s, now)
     self.tgt.alt, self.tgt.brg, self.tgt.spd = cmd.alt, cmd.brg, cmd.spd
-    self:speed_to(cmd.spd, cmd.rate, s)
+    self:speed_to(cmd.spd, cmd.rate, s, cmd.hold)
     self.sway_target = cmd.side
   elseif self.mode == "HOVER" then
     self:hover_hold(s)

@@ -348,8 +348,12 @@ local function both_script()
   dump("cruise")
 
   type_line("rcs off")
-  sleep(2)
-  check(w.cmd.thrust_port > 0 and w.cmd.thrust_stbd > 0, "RCS off keeps nonzero CRUISE propulsion")
+  -- With almost no drag a steady cruise needs almost no thrust, so check
+  -- that the pushers still drive a speed change with RCS off.
+  type_line("spd 25")
+  sleep(12)
+  local after = math.sqrt(w.vx * w.vx + w.vz * w.vz)
+  check(after > 23, "RCS off keeps nonzero CRUISE propulsion", string.format("%.2f m/s", after))
   type_line("hover")
   sleep(4)
   check(w.cmd.thrust_port == 0 and w.cmd.thrust_stbd == 0, "RCS off releases station-keeping pushers")
