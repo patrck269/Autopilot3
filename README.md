@@ -127,6 +127,10 @@ On the host, `python tools/rec_analyze.py ap3_rec.csv` prints:
 - `HDG_P2P`: the same for heading error in HOVER
 - `HDG_AFTER_PUSHER` / `HDG_AFTER_LIFT`: the share of HOVER heading corrections that started within 2 s of a pusher (or lift) RPM change
 
+## Host inbox
+
+From the server host, commands can be dropped into the computer's folder in the world save (`computercraft/computer/<id>`): `ap3_host.in` holds terminal-syntax commands, one per line. The flight loop runs them about once a second, deletes the file and appends each reply to `ap3_host.log`. For 15 minutes after the last command it also rewrites `ap3_host.status` every second (mode, position, heading, targets, phases, alerts, recorder rows). `tools/ap3_host.py <folder> send "hover" "rec on"` writes the inbox atomically and prints the replies; `status` and `log` print the other two files.
+
 ## Bomb bay
 
 The bay holds 46 bombs in two rows of 23. Bay row 1 is at the bow. The port row runs 14 to 34 from the bow, then 13, then 35; the starboard row runs 58 down to 36 from the bow. So the numbering starts at 14 in the port-bow corner and runs counterclockwise, with 13 between 34 and 35.

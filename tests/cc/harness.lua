@@ -506,6 +506,21 @@ local function nav_script()
   local dd = math.sqrt((w.x - tx) ^ 2 + (w.z - (tz + 5)) ^ 2)
   check(dd <= 2, "the ship holds 5 blocks to starboard", string.format("%.2f blocks off", dd))
   dump("dock stbd 5")
+
+  -- Host inbox: a command file written from outside is run and answered.
+  local h = fs.open("/ap3_host.in", "w")
+  h.write("wp list\ngoto 10\n")
+  h.close()
+  sleep(2.5)
+  local log = ""
+  if fs.exists("/ap3_host.log") then
+    local lh = fs.open("/ap3_host.log", "r")
+    log = lh.readAll()
+    lh.close()
+  end
+  check(not fs.exists("/ap3_host.in") and log:find("wp list -> OK waypoints: home", 1, true) ~= nil
+    and log:find("goto 10 -> REJECTED goto X Z", 1, true) ~= nil, "host inbox commands are run and answered", log)
+  check(fs.exists("/ap3_host.status"), "host inbox keeps a status snapshot")
 end
 
 local scripts = { both = both_script, missing = missing_script, velocity = velocity_script, nav = nav_script }

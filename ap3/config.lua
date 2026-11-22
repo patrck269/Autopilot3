@@ -173,6 +173,12 @@ return {
   -- Flight recorder ('rec on'): one CSV row every 'every' control steps.
   rec = { every = 2, min_free = 100000 }, -- stops itself when the disk has less than min_free bytes
 
+  -- Host inbox: commands in terminal syntax, one per line, written into this
+  -- computer's folder on the server host. Replies are appended to log; while
+  -- the inbox was used in the last 'active' s, a status snapshot is written
+  -- every 'poll' s.
+  host = { inbox = "/ap3_host.in", log = "/ap3_host.log", status = "/ap3_host.status", poll = 1, active = 900 },
+
   -- DEBUG mode RPM for every motor (written to the block as is).
   debug_rpm = 15,
 

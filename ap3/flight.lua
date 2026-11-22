@@ -9,6 +9,7 @@ local autopilot = require("ap3.autopilot")
 local bombbay = require("ap3.bombbay")
 local store = require("ap3.store")
 local recorder = require("ap3.recorder")
+local cmdline = require("ap3.cmdline")
 
 local M = {}
 
@@ -168,11 +169,52 @@ function M.run(cfg, opts)
     return ok, text
   end
 
+  -- Host inbox: terminal-syntax commands written into this computer's
+  -- folder from the server host, one per line. Replies go to host.log; a
+  -- status snapshot is kept in host.status while the inbox is in use.
+  local host_seen = -math.huge
+  local function host_snapshot(now)
+    local s = last_s
+    local g = s.ground or {}
+    return {
+      t = now, mode = ap.mode, x = s.x, y = s.y, z = s.z, vy = s.vy, hdg = s.hdg,
+      gs = g.gs, v_fwd = g.v_fwd, v_side = g.v_side, pitch = s.pitch, roll = s.roll, yaw_rate = s.yaw_rate,
+      tgt = { alt = ap.tgt.alt, brg = ap.tgt.brg, spd = ap.tgt.spd },
+      alt_phase = ap.alt.phase, grounded = ap.alt.grounded, spd_phase = ap.spd.phase, v_ref = ap.spd.v_ref,
+      nav = ap.nav.phase, rec = { on = rec.h ~= nil, rows = rec.rows, full = rec.full },
+      alerts = ap:alerts(s, now), msg = message,
+    }
+  end
+  local function host_poll(now)
+    local hc = cfg.host
+    if fs.exists(hc.inbox) then
+      local h = fs.open(hc.inbox, "r")
+      local text = h and h.readAll() or ""
+      if h then h.close() end
+      fs.delete(hc.inbox)
+      host_seen = now
+      local log = fs.open(hc.log, "a")
+      for line in text:gmatch("[^\r\n]+") do
+        local cmd, err = cmdline.parse(line)
+        local ok, reply
+        if type(cmd) == "table" then
+          ok, reply = handle(cmd)
+        else
+          ok, reply = false, cmd == "help" and "help is terminal-only" or err
+        end
+        if log then log.writeLine(string.format("%.1f %s -> %s %s", now, line, ok and "OK" or "REJECTED", tostring(reply))) end
+      end
+      if log then log.close() end
+    end
+    if now - host_seen < hc.active then store.save(hc.status, host_snapshot(now)) end
+  end
+
   local function control()
     local period = cfg.loop_period
     local timer = os.startTimer(period)
     local last = os.clock()
     local save_at = os.clock() + 30
+    local host_at = os.clock()
     while true do
       local ev, id = os.pullEvent("timer")
       if id == timer then
@@ -194,6 +236,10 @@ function M.run(cfg, opts)
         if now - sent_at >= cfg.status_period then
           link:send_status(status(now))
           sent_at = now
+        end
+        if now >= host_at then
+          host_at = now + cfg.host.poll
+          host_poll(now)
         end
         if reboot_at and now >= reboot_at then os.reboot() end
         if now >= save_at then
