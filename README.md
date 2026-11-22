@@ -124,7 +124,7 @@ On the host, `python tools/rec_analyze.py ap3_rec.csv` prints:
 
 - `PHANTOM_VELOCITY yes|no`: the hull stood still (by position) for 5 s or more while the velocity API read over 0.5 m/s different
 - `ALT_P2P`: the largest peak-to-peak altitude error over 30 s or more at one altitude target (climbs and descents left out)
-- `HDG_P2P`: the same for heading error in HOVER
+- `HDG_P2P`: the same for heading error in HOVER, counted from the first time the heading is within 2° of the bearing (a commanded turn is not sway)
 - `HDG_AFTER_PUSHER` / `HDG_AFTER_LIFT`: the share of HOVER heading corrections that started within 2 s of a pusher (or lift) RPM change
 
 ## Host inbox

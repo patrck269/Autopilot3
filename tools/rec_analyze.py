@@ -9,7 +9,9 @@ Prints:
   ALT_P2P <blocks>         largest peak-to-peak of y - tgt_alt over any span of
                            >= 30 s at one altitude target in HOVER/CRUISE/NAV
                            (climbs, descents and lift-off excluded)
-  HDG_P2P <deg>            the same for heading - bearing, HOVER only
+  HDG_P2P <deg>            the same for heading - bearing, HOVER only, from the
+                           first time the heading is within 2 deg (a commanded
+                           turn is not sway)
   HDG_AFTER_PUSHER <share> share of heading corrections starting in HOVER with
                            a pusher RPM change in the 2 s before
   HDG_AFTER_LIFT <share>   the same for any lift corner RPM change
@@ -79,10 +81,13 @@ def spans(rows, keep, key):
     return out
 
 
-def worst_p2p(rows, keep, key, err, min_span=30.0):
+def worst_p2p(rows, keep, key, err, min_span=30.0, settled=None):
     best = None
     for run in spans(rows, keep, key):
-        if run[-1]["t"] - run[0]["t"] < min_span:
+        if settled is not None:
+            first = next((i for i, r in enumerate(run) if err(r) is not None and abs(err(r)) <= settled), None)
+            run = run[first:] if first is not None else []
+        if not run or run[-1]["t"] - run[0]["t"] < min_span:
             continue
         errs = [err(r) for r in run if err(r) is not None]
         if errs:
@@ -132,7 +137,7 @@ def main():
 
     print("PHANTOM_VELOCITY " + ("yes" if phantom(rows) else "no"))
     print("ALT_P2P " + fmt(worst_p2p(rows, alt_keep, "tgt_alt", alt_err)))
-    print("HDG_P2P " + fmt(worst_p2p(rows, lambda r: r["mode"] == "HOVER", "tgt_brg", hdg_err)))
+    print("HDG_P2P " + fmt(worst_p2p(rows, lambda r: r["mode"] == "HOVER", "tgt_brg", hdg_err, settled=2.0)))
     print("HDG_AFTER_PUSHER " + fmt(after(rows, PUSHERS)))
     print("HDG_AFTER_LIFT " + fmt(after(rows, LIFT)))
 
