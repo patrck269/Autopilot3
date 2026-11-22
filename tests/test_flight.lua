@@ -881,5 +881,25 @@ for _, slew in ipairs({ 20, 16 }) do
     string.format("worst %.2f", worst))
 end
 
+print("41. Pusher strength: turns and mislearned saves")
+do
+  -- In game the saved full-thrust acceleration reached 84 m/s^2 (measured
+  -- about 32), and NAV HOLD barely braked: such a save is discarded.
+  local bad = plant.new({ saved = { A = 84, Dn = 0, thrust_cap = CFG.motors.thrust_port.cap } })
+  check(bad.ap.spd.A == CFG.speed.accel_full, "a saved A above max_accel_full falls back to the first guess",
+    string.format("A %.1f", bad.ap.spd.A))
+  -- A turn swings the velocity into the bow axis without any thrust; read
+  -- as acceleration it skewed A by a third.
+  local sim = nav_hull()
+  sim.cmd("spd", 20)
+  sim.cmd("mode", "CRUISE")
+  sim.run(40)
+  local before, lo = sim.ap.spd.A, math.huge
+  sim.cmd("brg", 90)
+  sim.run(60, function(s2) lo = math.min(lo, s2.ap.spd.A) end)
+  check(lo >= 0.8 * before, "a 90 deg turn at 20 m/s keeps A within 20%",
+    string.format("%.1f -> min %.1f", before, lo))
+end
+
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
 os.exit(failures == 0 and 0 or 1)

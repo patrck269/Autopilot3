@@ -109,7 +109,7 @@ return {
     -- about 32 m/s^2 at full thrust, and (Eureka helm brake off) 0.05 m/s^2 of drag at 35 m/s.
     accel_full = 30,      -- first guess: m/s^2 at full pusher thrust
     min_accel_full = 0.3, -- m/s^2 at full thrust: a learned or saved value below this is not believed
-    max_accel_full = 100, -- and above this
+    max_accel_full = 60,  -- and above this (measured about 32; a save above it is discarded)
     top_speed = 900,      -- first guess: speed where full thrust equals drag
   },
 

@@ -30,7 +30,11 @@ function M.new(cfg, saved)
   -- without thrust_cap were made at the old 1500 RPM cap.
   if saved and util.finite(saved.A) and util.finite(saved.Dn) and saved.A > c.min_accel_full then
     local old = util.finite(saved.thrust_cap) and saved.thrust_cap > 0 and saved.thrust_cap or 1500
-    A, Dn = util.clamp(saved.A * (cap / old) ^ 2, c.min_accel_full, c.max_accel_full), saved.Dn
+    local scaled = saved.A * (cap / old) ^ 2
+    -- Above max_accel_full the save is a mislearned value, not a hull.
+    if scaled <= c.max_accel_full then
+      A, Dn = math.max(scaled, c.min_accel_full), saved.Dn
+    end
   end
   return setmetatable({
     c = c,
@@ -92,11 +96,19 @@ function M:set_target(target, v_now, min_rate)
   self.rate = math.max(gap / duration, self.c.min_ramp, min_rate or 0)
 end
 
--- Learn A and D from 0.5 s windows of measured acceleration.
+-- Learn A and D from 0.5 s windows of measured acceleration: the change of
+-- the world velocity along the bow, so a turn (which swings the velocity
+-- into the bow axis without any thrust) is not read as acceleration.
+-- Position hold does not learn: its forces are a few thousandths of full,
+-- so any other push on the hull reads as an enormous A (live: 84 m/s^2).
 function M:observe(s, applied_f, now)
+  if self.accel_cap then
+    self.win = nil
+    return
+  end
   local w = self.win
   if w == nil then
-    self.win = { t0 = now, v0 = s.v_fwd, f = 0, vv = 0, n = 0 }
+    self.win = { t0 = now, vx0 = s.vx, vz0 = s.vz, f = 0, vv = 0, n = 0 }
     return
   end
   w.f = w.f + applied_f
@@ -104,12 +116,13 @@ function M:observe(s, applied_f, now)
   w.n = w.n + 1
   local span = now - w.t0
   if span < 0.5 then return end
-  self.win = { t0 = now, v0 = s.v_fwd, f = 0, vv = 0, n = 0 }
+  self.win = { t0 = now, vx0 = s.vx, vz0 = s.vz, f = 0, vv = 0, n = 0 }
 
   local f = w.f / w.n
   local x2 = -(w.vv / w.n) / (S * S)
   if math.abs(f) < 0.02 and math.abs(x2) < 0.002 then return end -- nothing to learn from
-  local y = (s.v_fwd - w.v0) / span
+  local h = math.rad(s.hdg)
+  local y = ((s.vx - w.vx0) * math.sin(h) - (s.vz - w.vz0) * math.cos(h)) / span
 
   self.est:update({ f, x2 }, y)
   local t = self.est.t
