@@ -14,10 +14,13 @@ local RAD = math.pi / 180
 
 W.DEFAULTS = {
   hover_rpm_sea = 900,  -- true hover RPM (every lift corner) at sea-level density
-  thrust_full = 4.0,    -- forward m/s^2 with both pushers at 1500 RPM, sea level
-  drag1 = 0.01,         -- linear drag, 1/s
-  drag2 = 0.001,        -- quadratic drag, 1/m
-  side_drag = 0.3,
+  thrust_full = 32,     -- forward m/s^2 with both pushers at thrust_rpm, sea level (measured in game)
+  thrust_rpm = 10000,   -- the 3.0 hull's small pusher props need this RPM for thrust_full
+  -- Drag measured in game with Eureka's helm brake off (2026-11-22): about
+  -- 0.05 m/s^2 at 35 m/s, under 0.02 m/s^2 when coasting below 1 m/s.
+  drag1 = 0.002,        -- linear drag, 1/s
+  drag2 = 0.00004,      -- quadratic drag, 1/m
+  side_drag = 0.002,
   rcs_accel = 0.6,      -- sway m/s^2 from one RCS at 2500 RPM
   yaw_accel = 2.0,      -- deg/s^2 from one RCS at 2500 RPM
   yaw_damp = 0.15,
@@ -99,7 +102,7 @@ function W.new(motors, opts, gravity)
     w.vz = -p.v_fwd * math.cos(a) + p.v_side * math.sin(a)
   end
   local k_lift = gravity / (sea * p.hover_rpm_sea ^ 2)
-  local k_thrust = p.thrust_full / (sea * 1500 ^ 2)
+  local k_thrust = p.thrust_full / (sea * p.thrust_rpm ^ 2)
 
   -- GeneratingKineticBlockEntity.applyNewSpeed detaches and reattaches the
   -- network. Budget 5 flicker points per downstream stop/start transition:

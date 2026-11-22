@@ -18,19 +18,26 @@ M.__index = M
 
 local S = 35 -- drag regressor scale, keeps both RLS columns near 1
 
+-- saved: { A =, Dn =, thrust_cap = } from an earlier flight, or nil.
 function M.new(cfg, saved)
   local c = cfg.speed
+  local cap = cfg.motors.thrust_port.cap
   local A = c.accel_full
   local Dn = A * (S / c.top_speed) ^ 2
-  -- A saved strength under min_accel_full was learned at the clamp (no real
-  -- push measured): start from the first guess instead.
-  if saved and util.finite(saved.A) and util.finite(saved.Dn) and saved.A >= c.min_accel_full then
-    A, Dn = saved.A, saved.Dn
+  -- A saved strength at or under min_accel_full was learned at the clamp
+  -- (no real push measured): start from the first guess instead. A real one
+  -- is defined at full thrust, which goes with the RPM cap squared; saves
+  -- without thrust_cap were made at the old 1500 RPM cap.
+  if saved and util.finite(saved.A) and util.finite(saved.Dn) and saved.A > c.min_accel_full then
+    local old = util.finite(saved.thrust_cap) and saved.thrust_cap > 0 and saved.thrust_cap or 1500
+    A, Dn = util.clamp(saved.A * (cap / old) ^ 2, c.min_accel_full, c.max_accel_full), saved.Dn
   end
   return setmetatable({
     c = c,
     A = A,
-    write_rate = cfg.actuator.slew.thrust / cfg.actuator.min_interval.thrust,
+    -- RPM per second the thrust really changes by: paced writes, or the
+    -- props' own spin rate (prop_slew per tick), whichever is slower.
+    write_rate = math.min(cfg.actuator.slew.thrust / cfg.actuator.min_interval.thrust, cfg.actuator.prop_slew * 20),
     write_wait = cfg.actuator.min_interval.thrust,
     Dn = Dn,
     est = rls.new({ A, Dn }, { 4, 4 }, 0.98),
@@ -40,6 +47,7 @@ function M.new(cfg, saved)
     integ = 0,
     pitch_hold = false,
     saturated = 0,
+    limited = 0,
     win = nil,
     phase = "HOLD",
     a_ref = 0,
@@ -104,14 +112,16 @@ function M:observe(s, applied_f, now)
 
   self.est:update({ f, x2 }, y)
   local t = self.est.t
-  t[1] = util.clamp(t[1], self.c.min_accel_full, 30)
+  t[1] = util.clamp(t[1], self.c.min_accel_full, self.c.max_accel_full)
   t[2] = util.clamp(t[2], 0, 60)
   self.A, self.Dn = t[1], t[2]
 end
 
 -- pending is commanded force minus force already reaching the hull. Account
 -- for the velocity still arriving as the props spin to their motor speeds.
-function M:command(s, dt, cap, applied_rpm, pending)
+-- fmax (optional): largest normalised force allowed (a probe while the bow
+-- axis is unconfirmed).
+function M:command(s, dt, cap, applied_rpm, pending, fmax)
   local c = self.c
   local v = s.v_fwd
   local applied_f = util.ssq(applied_rpm or 0) / (cap * cap)
@@ -122,30 +132,45 @@ function M:command(s, dt, cap, applied_rpm, pending)
   local coming = self.A * (pending or 0) * horizon
   local net_accel = self.A * prop_f - self:drag(v)
 
+  -- The reference eases into the target (jerk-limited): the thrust that is
+  -- accelerating the hull takes seconds to shed through prop spin.
+  local rate = math.min(self.rate, math.sqrt(2 * c.jerk * math.abs(self.target - self.v_ref)))
   local before = self.v_ref
   if not self.pitch_hold then
-    self.v_ref = util.approach(self.v_ref, self.target, self.rate * dt)
+    self.v_ref = util.approach(self.v_ref, self.target, math.max(rate, 0.05) * dt)
   end
   self.a_ref = (self.v_ref - before) / dt
 
-  local ahead = util.approach(self.v_ref, self.target, self.rate * horizon)
+  local ahead = util.approach(self.v_ref, self.target, rate * horizon)
   local err = ahead - v - net_accel * horizon - coming
   local grow = c.int_gain * err * dt
-  if not self.held_f and not (self.saturated ~= 0 and util.sign(grow) == self.saturated) then
+  local wound = self.saturated ~= 0 and self.saturated or self.limited
+  if not self.held_f and not (wound ~= 0 and util.sign(grow) == wound) then
     self.integ = util.clamp(self.integ + grow, -c.int_limit, c.int_limit)
   end
 
   -- Preview the end of the ramp: the pushers need paced writes to shed the
   -- acceleration thrust, so asking for it until arrival guarantees overshoot.
+  -- Shedding it takes the whole ramp-down (|rpm| / write_rate), so the feed
+  -- starts to fall that long before the reference arrives.
   local feed = self.a_ref
-  if horizon > 0 then
-    feed = self.pitch_hold and 0 or (ahead - self.v_ref) / horizon
+  local shed = math.max(c.thrust_lag, math.abs(applied_rpm or 0) / self.write_rate)
+  if not self.pitch_hold then
+    feed = (util.approach(self.v_ref, self.target, rate * shed) - self.v_ref) / shed
+  else
+    feed = 0
   end
   local accel = feed + c.vel_gain * err + self.integ
+  -- Ask for at most max_accel beyond drag: strong pushers driven to full
+  -- take many seconds to spin up and down again, and overshoot.
+  self.limited = 0
+  if accel > c.max_accel then accel = c.max_accel; self.limited = 1 end
+  if accel < -c.max_accel then accel = -c.max_accel; self.limited = -1 end
   local f = (accel + self:drag(v)) / self.A
   self.saturated = 0
-  if f > 1 then f = 1; self.saturated = 1 end
-  if f < -1 then f = -1; self.saturated = -1 end
+  local top = fmax or 1
+  if f > top then f = top; self.saturated = 1 end
+  if f < -top then f = -top; self.saturated = -1 end
 
   -- Pitch protection: thrust along the hull pitches the nose when the line of
   -- thrust misses the centre of mass. Forward thrust dipping the nose (or

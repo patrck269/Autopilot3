@@ -82,7 +82,8 @@ function M:engage(mode, s)
     self.nav:stop()
   end
   self.sway_target = nil
-  self.nav_sent = nil
+  self.spd_sent = nil
+  self.hover_pt, self.hover_state = nil, { hold_on = false }
   -- Learning pauses in KILL and DEBUG; start fresh windows either side.
   self.alt.win, self.spd.win, self.hdg.win, self.motion.win = nil, nil, nil, nil
   if M.FLYING[mode] then
@@ -100,6 +101,38 @@ function M:engage(mode, s)
     end
   end
   self:log("MODE " .. mode)
+end
+
+-- HOVER holds the point where the hull came to rest: with the helm's brake
+-- off a hull with almost no drag drifts otherwise. The point is taken once
+-- ground speed is under nav.hover_capture; the RCS check, 'rcs off' and a
+-- new mode drop it.
+function M:hover_hold(s)
+  local c = self.cfg.nav
+  local spd, side = 0, 0
+  if self.rcs_off then
+    self.hover_pt = nil
+  else
+    if not self.hover_pt and s.gs < c.hover_capture then
+      self.hover_pt = { x = s.x, z = s.z }
+      self.hover_state.hold_on = false
+    end
+    if self.hover_pt then
+      spd, side = nav.translate(c, self.hover_state, self.hover_pt.x, self.hover_pt.z, s)
+    end
+  end
+  self:speed_to(spd, c.hold_accel, s)
+  self.sway_target = side
+end
+
+-- Set the forward speed target, re-ramping only when it changes (set_target
+-- plans the ramp from the reference's gap to it).
+function M:speed_to(spd, rate, s)
+  local sent = self.spd_sent
+  if not sent or sent.spd ~= spd or sent.rate ~= rate then
+    self.spd:set_target(spd, s.v_fwd, rate)
+    self.spd_sent = { spd = spd, rate = rate }
+  end
 end
 
 -- Start NAV on list (legs), or with dock = true hold list[1] by translation
@@ -146,7 +179,9 @@ function M:dock(v, s)
   end
   if s == nil then return false, "no telemetry" end
   if not p or m == "here" then
-    p = { x = s.x, z = s.z, y = self.tgt.alt, brg = self.tgt.brg or util.round(s.hdg) % 360 }
+    -- In HOVER a move starts from the point being held, so presses add up.
+    local hp = m ~= "here" and self.hover_pt or s
+    p = { x = hp.x, z = hp.z, y = self.tgt.alt, brg = self.tgt.brg or util.round(s.hdg) % 360 }
   end
   p.y = p.y or self.tgt.alt or util.round(s.y)
   local b = math.rad(p.brg)
@@ -277,6 +312,7 @@ function M:command(msg, s)
     end
     self.check = rcscheck.new(self.cfg)
     self.rcs_found = nil
+    self.hover_pt = nil -- the check moves the hull: hold where it ends up
     self:log("RCS CHECK START")
     return true, "rcs check: one corner at a time, about 45 s"
   elseif c == "rcs_off" then
@@ -413,14 +449,10 @@ function M:step(s, now, dt, bank)
   if self.mode == "NAV" then
     local cmd = self.nav:step(s, now)
     self.tgt.alt, self.tgt.brg, self.tgt.spd = cmd.alt, cmd.brg, cmd.spd
-    -- Re-ramp only when the target changes: set_target plans the ramp from
-    -- the reference's gap to it.
-    local sent = self.nav_sent
-    if not sent or sent.spd ~= cmd.spd or sent.rate ~= cmd.rate then
-      self.spd:set_target(cmd.spd, s.v_fwd, cmd.rate)
-      self.nav_sent = { spd = cmd.spd, rate = cmd.rate }
-    end
+    self:speed_to(cmd.spd, cmd.rate, s)
     self.sway_target = cmd.side
+  elseif self.mode == "HOVER" then
+    self:hover_hold(s)
   end
   self:put_lift(out, self.alt:command(s, self.tgt.alt, dt, self.caps.lift_bow_port), s, dt)
   local T = 0
@@ -435,7 +467,10 @@ function M:step(s, now, dt, bank)
       self.pusher_released = false
     end
     local pending = util.ssq(thr_applied) / (thr_cap * thr_cap) - thr_f
-    T = self.spd:command(s, dt, thr_cap, thr_applied, pending)
+    -- Until the bow axis is confirmed, thrust along a wrong axis would run
+    -- away: the pushers only probe (enough force for the bow to be learned).
+    local fmax = (self.motion.frame_ok or self.bow_learned) and 1 or cfg.speed.probe_force
+    T = self.spd:command(s, dt, thr_cap, thr_applied, pending, fmax)
   end
   out.thrust_port, out.thrust_stbd = T, T
   local station = self.mode == "HOVER" or (self.mode == "NAV" and self.nav.phase ~= "TRANSIT")
@@ -524,7 +559,7 @@ function M:saved()
   local f = self.tel.forward
   return {
     k = self.alt.k, A = self.spd.A, Dn = self.spd.Dn, yaw_b = h.yaw_b,
-    rcs_cap = self.caps.bow_port,
+    rcs_cap = self.caps.bow_port, thrust_cap = self.caps.thrust_port,
     -- A confirmed config axis is kept too, so the levelling runs from the
     -- start of the next flight.
     bow = (self.bow_learned or self.motion.frame_ok) and { x = f.x, y = f.y, z = f.z } or nil,

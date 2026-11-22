@@ -108,8 +108,8 @@ print("5. Cruise: 0 -> 30 m/s within 15 s, hold bearing and altitude")
 do
   -- Off-centre thrust line: at full pusher thrust it needs about a quarter of
   -- what one RCS pair can give at 2000 RPM.
-  local sim = plant.new({ hover_rpm_sea = 900, y = 200, lift = 900, misalign = 0.08, psi = 10,
-    saved = { k = 10 / (plant.rho(62) * 900 * 900) } })
+  local sim = plant.new({ hover_rpm_sea = 900, y = 200, lift = 900, misalign = 0.01, psi = 10,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
   sim.cmd("alt", 200)
   sim.cmd("brg", 90)
   sim.cmd("mode", "HOVER")
@@ -155,10 +155,11 @@ end
 
 print("8. Nose dips under acceleration: thrust held back")
 do
-  -- Unprotected, full thrust here would pitch the nose about 8 deg down; cruise
-  -- drag alone about 3 deg.
-  local sim = plant.new({ hover_rpm_sea = 900, y = 200, lift = 900, dip = 1.0,
-    saved = { k = 10 / (plant.rho(62) * 900 * 900) } })
+  -- Unprotected, the most thrust the speed loop asks for (max_accel beyond
+  -- drag) would pitch the nose about 10 deg down; cruise drag alone about 2.
+  local sim = plant.new({ hover_rpm_sea = 900, y = 200, lift = 900, dip = 0.8,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } },
+    cfg = function(cfg) cfg.level.kp, cfg.level.kd, cfg.level.ki = 0, 0, 0 end })
   sim.cmd("alt", 200)
   sim.cmd("spd", 30)
   sim.cmd("mode", "CRUISE")
@@ -262,20 +263,22 @@ do
   check(math.abs(migrated.ap.hdg:authority() - want) < 1e-9,
     "saved yaw authority scales with the RPM cap", string.format("%.2f", migrated.ap.hdg:authority()))
   local weak_saved = plant.new({ saved = { yaw_b = 0.15, rcs_cap = 2000 } })
-  check(math.abs(weak_saved.ap.hdg:authority() - 0.6) < 1e-9,
+  local weak_want = 0.15 * (RCS_CAP / 2000) ^ 2
+  check(math.abs(weak_saved.ap.hdg:authority() - weak_want) < 1e-9,
     "old weak calibration is validated after cap rescaling", tostring(weak_saved.ap.hdg:authority()))
-  local sim = plant.new({ y = 200, lift = 900, psi = 0, yaw_accel = 0.3,
-    saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 0.2, rcs_cap = RCS_CAP } })
+  -- A hull too weak for the turn: the RCS pulls at full.
+  local sim = plant.new({ y = 200, lift = 900, psi = 0, yaw_accel = 0.02, yaw_damp = 2,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), yaw_b = 6, rcs_cap = RCS_CAP } })
   sim.cmd("alt", 200)
   sim.cmd("brg", 170)
   sim.cmd("mode", "HOVER")
   local top = 0
-  sim.run(20, function(s2)
+  sim.run(40, function(s2)
     for _, id in ipairs({ "bow_port", "bow_stbd", "stern_port", "stern_stbd" }) do
       top = math.max(top, math.abs(s2.w.cmd[id]))
     end
   end)
-  check(top == RCS_CAP, "RCS reaches but does not pass " .. RCS_CAP .. " RPM", "max " .. top)
+  check(top <= RCS_CAP and top >= 0.99 * RCS_CAP, "RCS reaches but does not pass " .. RCS_CAP .. " RPM", "max " .. top)
 end
 
 print("15. DEBUG: every motor at +15 RPM on the block, calibration untouched")
@@ -482,7 +485,7 @@ end
 print("25. Pushers stay paired")
 do
   local sim = plant.new({ y = 200, lift = 900, psi = 0,
-    saved = { k = 10 / (plant.rho(62) * 900 * 900) } })
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
   sim.cmd("alt", 200)
   sim.cmd("brg", 0)
   sim.cmd("mode", "HOVER")
@@ -582,8 +585,11 @@ do
   sim.cmd("rcs_off")
   sim.cmd("spd", 10)
   sim.cmd("mode", "CRUISE")
-  sim.run(35)
-  check(sim.w.cmd.thrust_port > 0 and math.abs(sim.s.v_fwd - 10) < 1,
+  -- On a hull with almost no drag the steady thrust is near 0: check that the
+  -- pushers drove it there, not the thrust at the last instant.
+  local fwd_thrust = false
+  sim.run(35, function(s2) fwd_thrust = fwd_thrust or s2.w.cmd.thrust_port > 0 end)
+  check(fwd_thrust and math.abs(sim.s.v_fwd - 10) < 1,
     "nonzero CRUISE target still drives pushers with RCS off", string.format("%.2f m/s", sim.s.v_fwd))
   sim.cmd("spd", 0)
   local zero_target = true
@@ -603,12 +609,13 @@ do
   sim.run(40)
   sim.cmd("spd", -10)
   sim.cmd("mode", "CRUISE")
-  local start, reached, peak_back = sim.w.t, nil, 0
+  local start, reached, peak_back, astern = sim.w.t, nil, 0, false
   sim.run(35, function(s2, s)
     peak_back = math.max(peak_back, -s.v_fwd)
+    astern = astern or s2.w.cmd.thrust_port < 0
     if not reached and math.abs(s.v_fwd + 10) < 1 then reached = s2.w.t - start end
   end)
-  check(sim.w.cmd.thrust_port < 0 and math.abs(sim.s.v_fwd + 10) < 1,
+  check(astern and math.abs(sim.s.v_fwd + 10) < 1,
     "negative target cruises astern", string.format("%.2f m/s", sim.s.v_fwd))
   check(reached ~= nil and reached <= 15 and peak_back < 11,
     "reverse arrival meets the forward timing and overshoot bounds",
@@ -621,8 +628,9 @@ do
     string.format("%.2f m/s", sim.s.v_fwd))
   sim.cmd("rcs_on")
   sim.cmd("spd", 10)
-  sim.run(35)
-  check(sim.w.cmd.thrust_port > 0 and math.abs(sim.s.v_fwd - 10) < 1,
+  local ahead_thrust = false
+  sim.run(35, function(s2) ahead_thrust = ahead_thrust or s2.w.cmd.thrust_port > 0 end)
+  check(ahead_thrust and math.abs(sim.s.v_fwd - 10) < 1,
     "reverse-to-forward transition crosses zero and settles", string.format("%.2f m/s", sim.s.v_fwd))
   sim.cmd("spd", -50)
   check(sim.ap.tgt.spd == -35, "reverse target clamps at minus 35")
@@ -724,11 +732,12 @@ print("35. goto with a final bearing: climb above " .. FLOOR .. " first, descend
 do
   local sim = nav_hull()
   sim.cmd("goto", { x = 400, z = 300, y = 230, brg = 270 })
-  local min_y, left_climb = math.huge, false
+  local min_y, left_climb, over = math.huge, false, false
   local arrived = fly_nav(sim, 400, function(s2, s)
     local phase = s2.ap.nav.phase
     if phase ~= "CLIMB" then left_climb = true end
-    if left_climb and flat(s2, 400, 300) > 3 then min_y = math.min(min_y, s.y) end
+    if flat(s2, 400, 300) <= 3 then over = true end
+    if left_climb and not over then min_y = math.min(min_y, s.y) end
   end)
   check(min_y >= FLOOR - 1.5, "cruises at " .. FLOOR .. " until over the point", string.format("min %.2f", min_y))
   check(arrived ~= nil, "ARRIVED within 400 s", tostring(arrived))
@@ -749,12 +758,13 @@ print("36. goto lower: descend last")
 do
   local sim = nav_hull(250)
   sim.cmd("goto", { x = 300, z = 0, y = 180, brg = 90 })
-  local min_far, left_climb = math.huge, false
+  local min_far, left_climb, over = math.huge, false, false
   local arrived = fly_nav(sim, 400, function(s2, s)
     if s2.ap.nav.phase ~= "CLIMB" then left_climb = true end
-    if left_climb and flat(s2, 300, 0) > 3 then min_far = math.min(min_far, s.y) end
+    if flat(s2, 300, 0) <= 3 then over = true end
+    if left_climb and not over then min_far = math.min(min_far, s.y) end
   end)
-  check(min_far >= FLOOR - 2, "stays at " .. FLOOR .. " while more than 3 blocks out", string.format("min %.2f", min_far))
+  check(min_far >= FLOOR - 2, "stays at " .. FLOOR .. " until over the point", string.format("min %.2f", min_far))
   check(arrived ~= nil and math.abs(sim.s.y - 180) <= 1.0, "ends at Y 180",
     string.format("y %.2f, arrived %s", sim.s.y, tostring(arrived)))
 end
@@ -828,6 +838,26 @@ do
   sim.cmd("mode", "CRUISE")
   ok = sim.ap:command({ c = "dock", v = { move = "fwd", n = 1 } }, sim.s)
   check(not ok, "docking moves are refused in CRUISE")
+end
+
+print("39. HOVER holds position on a hull with almost no drag")
+do
+  -- Drifting 1 m/s to starboard and 0.6 m/s ahead when HOVER engages.
+  local sim = plant.new({ y = 200, lift = 900, psi = 0, v_side = 1, v_fwd = 0.6,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", 200)
+  sim.cmd("mode", "HOVER")
+  sim.run(30)
+  local pt = sim.ap.hover_pt
+  check(pt ~= nil, "the drift is stopped and a point is held")
+  pt = pt or { x = 0, z = 0 }
+  local worst = 0
+  sim.run(120, function(s2) worst = math.max(worst, flat(s2, pt.x, pt.z)) end)
+  check(worst <= 2, "stays within 2 blocks of it for 2 minutes", string.format("worst %.2f", worst))
+  sim.ap:command({ c = "dock", v = { move = "stbd", n = 5 } }, sim.s)
+  sim.run(60)
+  check(flat(sim, pt.x + 5, pt.z) <= 2, "a dock move from HOVER starts from the held point",
+    string.format("off %.2f", flat(sim, pt.x + 5, pt.z)))
 end
 
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))

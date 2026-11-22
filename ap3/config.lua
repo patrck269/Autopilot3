@@ -10,12 +10,12 @@ return {
     lift_bow_stbd   = { name = "electric_motor_2", cap = 2750, sign = 1, label = "E2 LIFT BOW STBD" },
     lift_stern_port = { name = "electric_motor_5", cap = 2750, sign = 1, label = "E5 LIFT STRN PORT" },
     lift_stern_stbd = { name = "electric_motor_3", cap = 2750, sign = 1, label = "E3 LIFT STRN STBD" },
-    bow_port        = { name = "electric_motor_6", cap = 4000, sign = 1, label = "R6 BOW PORT" },
-    bow_stbd        = { name = "electric_motor_1", cap = 4000, sign = 1, label = "R1 BOW STBD" },
-    stern_port      = { name = "electric_motor_4", cap = 4000, sign = 1, label = "R4 STRN PORT" },
-    stern_stbd      = { name = "electric_motor_0", cap = 4000, sign = 1, label = "R0 STRN STBD" },
-    thrust_port     = { name = "electric_motor_8", cap = 1500, sign = 1, label = "L8 PUSH PORT" },
-    thrust_stbd     = { name = "electric_motor_9", cap = 1500, sign = 1, label = "S9 PUSH STBD" },
+    bow_port        = { name = "electric_motor_6", cap = 15000, sign = 1, label = "R6 BOW PORT" },
+    bow_stbd        = { name = "electric_motor_1", cap = 15000, sign = 1, label = "R1 BOW STBD" },
+    stern_port      = { name = "electric_motor_4", cap = 15000, sign = 1, label = "R4 STRN PORT" },
+    stern_stbd      = { name = "electric_motor_0", cap = 15000, sign = 1, label = "R0 STRN STBD" },
+    thrust_port     = { name = "electric_motor_8", cap = 10000, sign = 1, label = "L8 PUSH PORT" },
+    thrust_stbd     = { name = "electric_motor_9", cap = 10000, sign = 1, label = "S9 PUSH STBD" },
   },
 
   -- Monitors used as MFDs, in display order. SWAP exchanges displays 1<->2
@@ -34,6 +34,7 @@ return {
     forward = { x = 1, y = 0, z = 0 },
     up = { x = 0, y = 1, z = 0 },
     bow_samples = 8,      -- 0.5 s windows with pusher thrust before the bow axis is trusted
+    vote_force = 0.0125,  -- share of full pusher thrust a window needs to count (0.4 m/s^2 at 32 m/s^2)
     bow_min_accel = 0.05, -- m/s^2 at full thrust: smaller responses are not trusted
     bow_snap_deg = 25,    -- the learned direction must be this close to a grid axis
     bow_streak = 4,       -- and give the same axis this many windows running
@@ -49,7 +50,7 @@ return {
     min_interval = { lift = 1.0, thrust = 1.0, rcs = 1.0 }, -- seconds between writes to one motor
     deadband = { lift = 10, thrust = 15, rcs = 100 },       -- smallest RPM change worth a write
     weight = { lift = 3, thrust = 2, rcs = 1.5 },            -- which group gets the next write
-    slew = { thrust = 400, lift = 300, rcs = 2000 },         -- largest RPM change per write
+    slew = { thrust = 900, lift = 300, rcs = 7500 },         -- largest RPM change per write
     rcs_min_rpm = 100,    -- smaller RCS commands are sent as 0 (finer pulses for a strong RCS)
   },
 
@@ -87,21 +88,27 @@ return {
   speed = {
     max = 35,             -- hard speed cap, m/s
     cap_margin = 0.5,     -- the speed reference stops this far under the cap
-    ramp_time = 12,       -- reference reaches the new target in this many s (requirement: within 15 s)
+    ramp_time = 14,       -- reference reaches the new target in this many s (requirement: within 15 s)
     min_ramp = 0.3,       -- slowest reference ramp, m/s^2
     vel_gain = 1.0,       -- (m/s^2) per m/s of predicted speed error
     thrust_lag = 1.2,     -- minimum preview horizon; grows if paced RPM ramp-down needs longer
     int_gain = 0.15,      -- integral (m/s^2) per (m/s * s)
-    int_limit = 2.0,      -- integral limit, m/s^2
+    int_limit = 0.5,      -- integral limit, m/s^2
     stop_band = 0.2,      -- stopped: brake drift down to this (m/s), then the pushers rest
     hover_engage = 0.8,   -- stopped: drift (m/s) that wakes the pushers again
     hold_band = 0.3,      -- cruising within this of the target speed (m/s): thrust is held
     hold_release = 0.5,   -- release early enough to stay near either signed target, including the cap margin
     pitch_limit = 6,      -- degrees of acceleration-induced nose dip before thrust is held back
+    probe_force = 0.02,   -- share of full thrust allowed until the bow axis is confirmed (0.64 m/s^2 at 32 m/s^2)
+    jerk = 0.5,           -- m/s^3: the speed reference eases into its target this gently
+    max_accel = 4,        -- largest acceleration asked for beyond drag, m/s^2 (strong pushers spin up and down slowly)
     -- Thrust model a = A*f - D*v|v| (f = normalised force, rpm^2/cap^2), learned in flight.
-    accel_full = 1.5,     -- first guess: m/s^2 at full pusher thrust
+    -- First guesses measured on the 3.0 ship (2026-11-22, 10000 RPM cap):
+    -- about 32 m/s^2 at full thrust, and (Eureka helm brake off) 0.05 m/s^2 of drag at 35 m/s.
+    accel_full = 30,      -- first guess: m/s^2 at full pusher thrust
     min_accel_full = 0.3, -- m/s^2 at full thrust: a learned or saved value below this is not believed
-    top_speed = 40,       -- first guess: speed where full thrust equals drag
+    max_accel_full = 100, -- and above this
+    top_speed = 900,      -- first guess: speed where full thrust equals drag
   },
 
   heading = {
@@ -124,22 +131,24 @@ return {
     high_speed_gain = 2.0,
     -- Positive RPM pulls on every RCS corner (fixed). Only the strength is
     -- learned in flight; these are the first guesses at full RCS.
-    yaw_authority = 10,   -- deg/s^2 at full RCS; doubling RPM quadruples force
-    min_authority = 0.4,  -- smallest yaw strength believed (deg/s^2)
-    max_authority = 200,  -- largest yaw strength believed; a saved value past it is discarded
+    yaw_authority = 140,  -- deg/s^2 at full RCS; doubling RPM quadruples force
+    min_authority = 5.6,  -- smallest yaw strength believed (deg/s^2)
+    max_authority = 2800, -- largest yaw strength believed; a saved value past it is discarded
     -- Turn force (share of full) a 0.5 s window needs before the strength is
     -- learned. Weaker windows mostly measure yaw from something else (a bump,
     -- an off-centre thrust line). Keep it under what a turn commands at
-    -- max_authority (about 0.015), so a high estimate can still come down.
-    learn_min_force = 0.0075, -- same absolute learning force as 3% at 2000 RPM
-    probe_limit = 0.05,   -- same absolute sideways probe as 20% at 2000 RPM
+    -- max_authority (about 0.001), so a high estimate can still come down.
+    -- These keep the absolute forces they had at the 4000 RPM cap: force
+    -- goes with RPM squared, so at 15000 the shares are (4000/15000)^2 of them.
+    learn_min_force = 0.00053, -- same absolute learning force as 3% at 2000 RPM
+    probe_limit = 0.0036, -- same absolute sideways probe as 20% at 2000 RPM
     -- Sideslip: drift past sway_engage (m/s) is braked with the same-side
     -- pullers until it is under sway_settle, then the sway force rests.
-    sway_authority = 3.0, -- first guess: m/s^2 sideways at full RCS
-    min_sway_authority = 0.08,
+    sway_authority = 42,  -- first guess: m/s^2 sideways at full RCS
+    min_sway_authority = 1.1,
     sway_gain = 0.3,      -- (m/s^2) per m/s of sideslip
-    sway_engage = 0.5,    -- m/s
-    sway_settle = 0.15,   -- m/s
+    sway_engage = 0.2,    -- m/s
+    sway_settle = 0.08,   -- m/s
     sway_guard_time = 10, -- s: if the drift has grown after braking this long, the brake stops
     sway_lag = 1.0,       -- s: drift the props' current spin will still add (they spin down slowly)
     yaw_lag = 1.0,        -- s: lead on yaw rate, including the enforced per-motor write interval
@@ -160,10 +169,11 @@ return {
     hold_engage = 1.5,     -- position hold drives toward the point beyond this distance (blocks)
     hold_settle = 0.75,    -- and rests inside this distance (with ground speed < 0.3 m/s)
     hold_margin = 0.5,     -- translation profile reaches 0 this far from the point
-    hold_gain = 0.5,       -- (m/s) per block of position error
+    hover_capture = 0.5,   -- HOVER holds the point where ground speed first drops under this (m/s)
+    hold_gain = 0.25,      -- (m/s) per block of position error
     hold_accel = 0.3,      -- planned translation deceleration, m/s^2
     hold_lead = 1.5,       -- s: position hold steers on the position this far ahead (pusher and RCS lag)
-    hold_fwd_max = 4,      -- fastest fore/aft translation, m/s
+    hold_fwd_max = 2,      -- fastest fore/aft translation, m/s
     hold_side_max = 2,     -- fastest sideways translation, m/s
     settle_time = 3,       -- s settled at a stop before the next leg starts
     max_legs = 20,

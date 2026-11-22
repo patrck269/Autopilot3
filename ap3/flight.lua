@@ -251,6 +251,7 @@ function M.run(cfg, opts)
           end
           if moved(cur.k, last_saved.k, 0.005) or moved(cur.A, last_saved.A, 0.01)
             or moved(cur.yaw_b, last_saved.yaw_b, 0.05) or cur.rcs_cap ~= last_saved.rcs_cap
+            or cur.thrust_cap ~= last_saved.thrust_cap
             or (cur.bow ~= nil) ~= (last_saved.bow ~= nil)
             or (cur.bow and last_saved.bow and util.dot(cur.bow, last_saved.bow) < 0.9) then
             store.save(cfg.cal_file, cur)

@@ -64,6 +64,28 @@ local function toward(e, vmax, c)
   return util.sign(e) * math.min(vmax, c.hold_gain * m, math.sqrt(2 * c.hold_accel * m))
 end
 
+-- Position hold by translation: the fore/aft speed (pushers) and sideways
+-- speed (RCS) that move the hull from s onto world point (x, z) without
+-- turning. state.hold_on carries the engage/settle hysteresis. Returns spd,
+-- side (m/s, starboard positive) and the distance.
+function M.translate(c, state, x, z, s)
+  local dx, dz = x - s.x, z - s.z
+  local d = math.sqrt(dx * dx + dz * dz)
+  local h = math.rad(s.hdg)
+  local along = dx * math.sin(h) - dz * math.cos(h)
+  local side = dx * math.cos(h) + dz * math.sin(h)
+  if d > c.hold_engage then
+    state.hold_on = true
+  elseif d < c.hold_settle and s.gs < 0.3 then
+    state.hold_on = false
+  end
+  if not state.hold_on then return 0, 0, d end
+  -- Steer on where the hull will be once the pushers and RCS have answered
+  -- (hold_lead s), not where it is: that damps the overshoot.
+  return toward(along - c.hold_lead * s.v_fwd, c.hold_fwd_max, c),
+    toward(side - c.hold_lead * s.v_side, c.hold_side_max, c), d
+end
+
 -- saved: the /ap3_nav.dat table ({ points =, route = }) or nil.
 function M.new(cfg, saved)
   local c = cfg.nav
@@ -157,6 +179,7 @@ function M:enter_hold(leg, s)
   self.hold_on = true
   self.settled_since = nil
   self.over = false -- set once over the point: the descent is not undone by a drift
+  self.pause_alt = nil
 end
 
 -- Start leg self.i from state s. Fly-throughs already inside pass_radius
@@ -269,21 +292,21 @@ function M:step(s, now)
       rate = CATCH * c.brake_accel, side = 0 }
   else
     -- HOLD / ARRIVED: descend last, translate onto the point, turn in place.
+    -- Once over the point (within 3 blocks) the descent starts; drifted
+    -- further out it pauses where it is, and goes on when back over it.
     local alt = self.transit_alt
-    if d <= 3 then self.over = true end
-    if leg.y ~= nil and (leg.y >= self.transit_alt or self.over) then alt = leg.y end
-    if d > c.hold_engage then
-      self.hold_on = true
-    elseif d < c.hold_settle and s.gs < 0.3 then
-      self.hold_on = false
+    if d <= 3 then self.over, self.pause_alt = true, nil end
+    if leg.y ~= nil and leg.y >= self.transit_alt then
+      alt = leg.y
+    elseif leg.y ~= nil and self.over then
+      if d > 3 then
+        self.pause_alt = self.pause_alt or util.round(s.y)
+        alt = math.max(self.pause_alt, leg.y)
+      else
+        alt = leg.y
+      end
     end
-    local spd, sway = 0, 0
-    if self.hold_on then
-      -- Steer on where the hull will be once the pushers and RCS have
-      -- answered (hold_lead s), not where it is: that damps the overshoot.
-      spd = toward(along - c.hold_lead * s.v_fwd, c.hold_fwd_max, c)
-      sway = toward(side - c.hold_lead * s.v_side, c.hold_side_max, c)
-    end
+    local spd, sway = M.translate(c, self, leg.x, leg.z, s)
     cmd = { alt = alt, brg = self.hold_brg, spd = spd, rate = c.hold_accel, side = sway }
     if self.phase == "HOLD" then
       local settled = d <= c.hold_engage and math.abs(util.wrap180(self.hold_brg - s.hdg)) <= 2

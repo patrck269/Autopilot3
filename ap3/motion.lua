@@ -48,13 +48,15 @@ function M:observe(s, thrust, sway, now)
   self.win = { t0 = now, vx = s.vx, vy = s.vy, vz = s.vz, f = 0, sw = 0, v1 = 0, v2 = 0, n = 0 }
 
   local mf, msw = w.f / w.n, w.sw / w.n
-  if math.abs(mf) < 0.05 and math.abs(msw) < 0.0125 then return end
+  -- Too little force to learn from: sideways the same absolute force as 5%
+  -- at 2000 RPM (15000 RPM cap), fore/aft half the bow-vote force.
+  local c = self.cfg.frame
+  if math.abs(mf) < c.vote_force / 2 and math.abs(msw) < 0.0009 then return end
   local aw = { x = (s.vx - w.vx) / span, y = (s.vy - w.vy) / span, z = (s.vz - w.vz) / span }
   local a1, a2 = self.tel.plane(util.rotate_inv(s.q, aw))
   self.fit[1]:update({ mf, msw, -w.v1 / w.n }, a1)
   self.fit[2]:update({ mf, msw, -w.v2 / w.n }, a2)
-  local c = self.cfg.frame
-  if math.abs(mf) >= 0.1 then
+  if math.abs(mf) >= c.vote_force then
     self.n_thrust = self.n_thrust + 1
     -- Thrust pushes toward the bow.
     self:vote("thrust", self.fit[1].t[1], self.fit[2].t[1], self.n_thrust, c.bow_min_accel)
