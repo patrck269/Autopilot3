@@ -34,11 +34,12 @@ W.DEFAULTS = {
   pitch_load = 0,       -- deg/s^2 nose up from an off-centre load
   roll_load = 0,        -- deg/s^2 starboard down from an off-centre load
   prop_slew = 32,       -- Clockwork bearing: spin moves half way to the target each tick, at most this RPM
-  cmd_delay = 0,        -- ticks before a pusher or RCS write reaches the prop (fore/aft recordings fit about 8;
-                        -- the lift is left undelayed: altitude holds 0.25 blocks live, the model would not with 8)
+  pusher_delay = 0,     -- ticks before a pusher write reaches the props (in-game recordings fit about 8)
+  rcs_delay = 0,        -- the same for the RCS (not measured)
   push_x = 0,           -- steady world-frame push on the hull, m/s^2 (a slight tilt of the lift, say)
   push_z = 0,
   gust = 0,             -- +- m/s^2 random push each tick, independent per axis
+  turn_slide = 0,       -- m/s^2 sideways (to starboard) per unit of right-turn RCS force: a turn pair that also slides the hull
   ground_y = 64,
   noise = 0,            -- +- m/s added to each velocity reading
   v_side = 0,           -- starting sideways drift, m/s (+ = starboard)
@@ -108,6 +109,7 @@ function W.new(motors, opts, gravity)
   end
   local k_lift = gravity / (sea * p.hover_rpm_sea ^ 2)
   local k_thrust = p.thrust_full / (sea * p.thrust_rpm ^ 2)
+  local rcs_cap = motors.bow_stbd and motors.bow_stbd.cap or 15000
 
   -- GeneratingKineticBlockEntity.applyNewSpeed detaches and reattaches the
   -- network. Budget 5 flicker points per downstream stop/start transition:
@@ -137,7 +139,8 @@ function W.new(motors, opts, gravity)
         if not PUSHERS[id] then assert(v >= 0, id .. " given negative RPM: " .. v) end
         if v ~= w.cmd[id] then bump(id, w.cmd[id], v) end
         w.cmd[id] = v
-        table.insert(w.queue, { at = w.ticks + (LIFT_SET[id] and 0 or p.cmd_delay), id = id, v = v })
+        local delay = PUSHERS[id] and p.pusher_delay or (LIFT_SET[id] and 0 or p.rcs_delay)
+        table.insert(w.queue, { at = w.ticks + delay, id = id, v = v })
         w.writes = w.writes + 1
       end,
       getSpeed = function() return w.cmd[id] end,
@@ -177,7 +180,7 @@ function W.new(motors, opts, gravity)
   for id in pairs(motors) do target[id] = w.cmd[id] end
   function w.step(dt)
     local rho = W.rho(w.y)
-    -- Writes reach the props cmd_delay ticks later.
+    -- Writes reach the props pusher_delay or rcs_delay ticks later.
     local keep = {}
     for _, q in ipairs(w.queue) do
       if q.at <= w.ticks then target[q.id] = q.v else keep[#keep + 1] = q end
@@ -218,7 +221,9 @@ function W.new(motors, opts, gravity)
     local function at(position) return f(p.at and p.at[position] or position) * rc end
     local rbs, rbp = at("bow_stbd"), at("bow_port")
     local rss, rsp = at("stern_stbd"), at("stern_port")
-    local a_side = p.rcs_accel * (rbs + rss - rbp - rsp) * rho / sea
+    -- Right-turn force as the autopilot counts it (normalised to the RCS cap).
+    local u_turn = ((rbs + rsp) - (rbp + rss)) * 2500 * 2500 / (2 * rcs_cap * rcs_cap)
+    local a_side = (p.rcs_accel * (rbs + rss - rbp - rsp) + p.turn_slide * u_turn) * rho / sea
     local yaw_acc = p.yaw_accel * ((rbs - rbp) - (rss - rsp)) * rho / sea
       - p.yaw_damp * w.r + p.misalign * a_thr
 

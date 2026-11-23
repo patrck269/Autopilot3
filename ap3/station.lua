@@ -26,7 +26,8 @@ M.__index = M
 local AXES = { "f", "s" } -- f: along the bow (pushers), s: to starboard (RCS)
 
 -- saved: the calibration table; its `station` = { f =, s = } holds the
--- absolute strengths (m/s^2 at full) learned on an earlier flight.
+-- absolute strengths (m/s^2 at full, sea-level air density) learned on an
+-- earlier flight.
 function M.new(cfg, saved)
   local seed = saved and type(saved.station) == "table" and saved.station or nil
   if seed and not (util.finite(seed.f) and seed.f > 0 and util.finite(seed.s) and seed.s > 0) then seed = nil end
@@ -38,7 +39,8 @@ function M.new(cfg, saved)
   return self
 end
 
--- Strengths to save: m/s^2 at full per axis, or nil before any were used.
+-- Strengths to save: m/s^2 at full per axis at sea-level density, or nil
+-- before any were used.
 function M:saved()
   return self.abs
 end
@@ -98,10 +100,12 @@ function M:observe(s, now, a_prop)
 end
 
 -- s: telemetry. A: pusher m/s^2 at full (speed loop); auth: sway m/s^2 at
--- full. f_prop, sw_prop: normalised pusher and sway force the props make
--- now (modelled spin); pend_f, pend_sw: force set but not yet reaching them.
--- Returns pusher force f and sway force sw (normalised) and the distance.
-function M:command(s, x, z, dt, now, A, auth, f_prop, sw_prop, pend_f, pend_sw)
+-- full, both at sea-level density; dens: the air's density relative to sea
+-- level (prop thrust goes with it). f_prop, sw_prop: normalised pusher and
+-- sway force the props make now (modelled spin); pend_f, pend_sw: force set
+-- but not yet reaching them. Returns pusher force f and sway force sw
+-- (normalised) and the distance.
+function M:command(s, x, z, dt, now, A, auth, dens, f_prop, sw_prop, pend_f, pend_sw)
   local c = self.c
   if self.seed then
     -- Strengths from an earlier flight, against this flight's speed and sway loops.
@@ -111,9 +115,9 @@ function M:command(s, x, z, dt, now, A, auth, f_prop, sw_prop, pend_f, pend_sw)
     end
     self.seed = nil
   end
-  local A_f, A_s = A * self.gain.f, auth * self.gain.s
-  self.abs = { f = A_f, s = A_s }
-  self:observe(s, now, { f = A * f_prop, s = auth * sw_prop })
+  self.abs = { f = A * self.gain.f, s = auth * self.gain.s }
+  local A_f, A_s = self.abs.f * dens, self.abs.s * dens
+  self:observe(s, now, { f = A * dens * f_prop, s = auth * dens * sw_prop })
 
   local h = math.rad(s.hdg)
   local fx, fz = math.sin(h), -math.cos(h) -- bow

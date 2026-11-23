@@ -24,12 +24,15 @@
 -- thrust line that misses the centre of mass. A correction starts past the
 -- deadzone and stops within settle_deg; in between the learned trim is held.
 --
--- Sideslip: the brake tracks a sideways velocity target (0 except in NAV
--- HOLD, where it translates the hull toward the point). An error past
+-- Sideslip: the brake holds sideways velocity at 0 outside station keeping
+-- (which sets the sideways force itself, ap3/station.lua). An error past
 -- sway_engage starts it; it runs until the error is under sway_settle, and
 -- stops early when the props' remaining spin will finish the job (they take
 -- over a second to spin down). The sideways strength comes from
--- ap3/motion.lua. Heading has first call on the RCS; sway gets what is left.
+-- ap3/motion.lua. Heading has first call on the RCS and sway gets what is
+-- left, except while the hull slides faster than turn_yield_drift: then the
+-- turn slows to turn_yield_rate and sway goes first. Turning and sideways
+-- strength are kept at sea-level air density.
 local util = require("ap3.util")
 local rls = require("ap3.rls")
 
@@ -37,7 +40,9 @@ local M = {}
 M.__index = M
 
 -- saved: { yaw_b =, rcs_cap = } learned on an earlier flight, or nil.
-function M.new(cfg, saved)
+-- Turning strength is kept at sea-level air density (RCS thrust goes with
+-- the density); sea_rho: air density at sea level.
+function M.new(cfg, saved, sea_rho)
   local c = cfg.heading
   local guess = c.yaw_authority
   local loaded = false
@@ -54,7 +59,7 @@ function M.new(cfg, saved)
     end
   end
   return setmetatable({
-    c = c, loaded = loaded,
+    c = c, loaded = loaded, sea = sea_rho or 1,
     -- Wide starting variance: the real strength may be many times the guess.
     yaw = rls.new({ guess, 0.1 }, { math.max(100, 100 * guess * guess), 0.25 }, 0.95),
     integ = 0, err = 0, r_cmd = 0, win = nil,
@@ -62,9 +67,14 @@ function M.new(cfg, saved)
   }, M)
 end
 
--- Turning strength: deg/s^2 at full turn force.
+-- Turning strength: deg/s^2 at full turn force, at sea-level density.
 function M:authority()
   return math.max(self.yaw.t[1], self.c.min_authority)
+end
+
+-- Air density relative to sea level at the hull.
+function M:density(s)
+  return util.clamp((s.rho or self.sea) / self.sea, 0.05, 2)
 end
 
 -- Engaging a mode or switching the bow axis: start the loops afresh.
@@ -89,7 +99,7 @@ function M:observe(s, u, now)
   local mu, mr = w.u / w.n, w.r / w.n
   if math.abs(mu) < self.c.learn_min_force then return end
   local l = self.yaw
-  l:update({ mu, -mr }, (s.yaw_rate - w.r0) / span)
+  l:update({ mu * self:density(s), -mr }, (s.yaw_rate - w.r0) / span)
   l.t[1] = util.clamp(l.t[1], self.c.min_authority, self.c.max_authority)
   if l.t[2] < 0 then l.t[2] = 0 end
 end
@@ -108,8 +118,14 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
   local c = self.c
   local err = util.wrap180(bearing - s.hdg)
   local dist = math.abs(err)
-  local b = self:authority()
+  local b = self:authority() * self:density(s)
   local rate = s.yaw_rate + (pending and b * pending * c.yaw_lag or 0)
+  -- Sliding sideways faster than turn_yield_drift: the RCS pair that turns
+  -- the hull also pushes it sideways (a 140 deg turn in place moved it 30
+  -- blocks in game), so the turn slows to turn_yield_rate and the sideways
+  -- force gets first call on the RCS.
+  local yielding = sway ~= nil and math.abs(sway.drift - (sway.target or 0)) > c.turn_yield_drift
+  local max_rate = yielding and math.min(c.max_rate, c.turn_yield_rate) or c.max_rate
 
   if self.active then
     if dist < c.settle_deg and math.abs(s.yaw_rate) < c.settle_rate then self.active = false end
@@ -123,7 +139,7 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
     u = util.clamp(self.integ / b, -1, 1)
   else
     local decel = math.min(c.yaw_accel, 0.5 * b)
-    local r_cmd = util.sign(err) * math.min(c.max_rate, c.bearing_gain * dist, math.sqrt(2 * decel * dist))
+    local r_cmd = util.sign(err) * math.min(max_rate, c.bearing_gain * dist, math.sqrt(2 * decel * dist))
     local r_err = r_cmd - rate
     local int_gain = c.int_gain
     if s.gs > c.high_speed then int_gain = int_gain * c.high_speed_gain end
@@ -136,6 +152,16 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
   end
   self.err = err
 
+  -- The turn and the sideways force share the RCS: normally the turn has
+  -- first call, while yielding the sideways force does.
+  local function share(u0, sw0)
+    if yielding then
+      return util.clamp(u0, -(1 - math.abs(sw0)), 1 - math.abs(sw0)), sw0
+    end
+    local room = 1 - math.abs(u0)
+    return u0, util.clamp(sw0, -room, room)
+  end
+
   -- Sideslip brake with engage/settle hysteresis, on the drift the hull will
   -- have once the props' current spin has played out.
   local sw = 0
@@ -145,8 +171,7 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
     self.drift = sway.drift
     self.sway_active = sway.force ~= 0
     local slimit = sway.limit or 1
-    local room = 1 - math.abs(u)
-    return u, util.clamp(sway.force, -math.min(slimit, room), math.min(slimit, room))
+    return share(u, util.clamp(sway.force, -slimit, slimit))
   end
   if sway then
     local err = sway.drift - (sway.target or 0)
@@ -161,11 +186,9 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
       local auth = math.max(sway.auth, c.min_sway_authority)
       local slimit = sway.limit or 1
       sw = util.clamp(-c.sway_gain * ahead / auth, -slimit, slimit)
-      local room = 1 - math.abs(u)
-      sw = util.clamp(sw, -room, room)
     end
   end
-  return u, sw
+  return share(u, sw)
 end
 
 -- Turn and sway forces from four corner RPMs.

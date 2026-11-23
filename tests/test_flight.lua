@@ -886,9 +886,9 @@ end
 
 print("41. Pusher strength: turns and mislearned saves")
 do
-  -- In game the saved full-thrust acceleration reached 84 m/s^2 (measured
-  -- about 32), and NAV HOLD barely braked: such a save is discarded.
-  local bad = plant.new({ saved = { A = 84, Dn = 0, thrust_cap = CFG.motors.thrust_port.cap } })
+  -- A save past max_accel_full is a mislearned value, not a hull: it is
+  -- discarded.
+  local bad = plant.new({ saved = { A = CFG.speed.max_accel_full * 1.2, Dn = 0, thrust_cap = CFG.motors.thrust_port.cap } })
   check(bad.ap.spd.A == CFG.speed.accel_full, "a saved A above max_accel_full falls back to the first guess",
     string.format("A %.1f", bad.ap.spd.A))
   -- A turn swings the velocity into the bow axis without any thrust; read
@@ -918,7 +918,7 @@ for _, case in ipairs({
   { "moving 3 m/s when HOVER engages, slow props", { v_fwd = 3, prop_slew = 20, thrust_full = 128 } },
 }) do
   math.randomseed(3)
-  local o = { y = 200, lift = 900, psi = 30, cmd_delay = 8, gust = 0.1, push_x = 0.02, push_z = -0.02,
+  local o = { y = 200, lift = 900, psi = 30, pusher_delay = 8, rcs_delay = 8, gust = 0.1, push_x = 0.02, push_z = -0.02,
     saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } }
   for k, v in pairs(case[2]) do o[k] = v end
   local sim = plant.new(o)
@@ -945,7 +945,7 @@ print("43. Station keeping after a reboot keeps the learned strengths")
 do
   local function hull(saved, v0)
     math.randomseed(5)
-    local sim = plant.new({ y = 200, lift = 900, psi = 30, cmd_delay = 8, gust = 0.1, thrust_full = 128, v_fwd = v0,
+    local sim = plant.new({ y = 200, lift = 900, psi = 30, pusher_delay = 8, rcs_delay = 8, gust = 0.1, thrust_full = 128, v_fwd = v0,
       saved = saved })
     sim.cmd("alt", 200)
     sim.cmd("brg", 30)
@@ -965,6 +965,81 @@ do
   end)
   check(pt ~= nil and worst < 0.5, "after the reboot the point is held within 0.5 blocks from the start",
     string.format("worst %.2f", worst))
+end
+
+-- A hull at Y 600 with in-game write delay and light gusts, holding in HOVER.
+local function trip_hull(o)
+  math.randomseed(11)
+  local opts = { y = 600, lift = 900, psi = 349, pusher_delay = 8, rcs_delay = 8, gust = 0.05,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } }
+  for k, v in pairs(o or {}) do opts[k] = v end
+  local sim = plant.new(opts)
+  sim.cmd("alt", opts.y)
+  sim.cmd("brg", opts.psi)
+  sim.cmd("mode", "HOVER")
+  sim.run(30)
+  return sim
+end
+
+print("44. NAV turning in place holds its spot")
+-- In game a 140 deg turn toward the course moved the hull 30 blocks: the
+-- RCS pair that turns it also slid it sideways.
+do
+  local sim = trip_hull({ turn_slide = 8 })
+  local x0, z0, worst, aligned = sim.w.x, sim.w.z, 0, false
+  local h = math.rad(126)
+  assert(sim.ap:command({ c = "goto", v = { x = x0 + 3000 * math.sin(h), z = z0 - 3000 * math.cos(h), y = 600 } }, sim.s))
+  sim.run(60, function(s2, s)
+    if math.abs(util.wrap180(s.hdg - 126)) < CFG.nav.align_deg then aligned = true end
+    if not aligned then worst = math.max(worst, flat(s2, x0, z0)) end
+  end)
+  check(aligned and worst < 8, "a 137 deg turn moves the hull under 8 blocks (16 before)", string.format("worst %.2f", worst))
+end
+
+print("45. NAV arrival: stop first, then station keeping and the descent")
+-- In game the hull entered HOLD at 2.9 m/s and passed the point by 10
+-- blocks; the descent started while it passed over, paused when it drifted
+-- off, fell 9-19 blocks below the pause and climbed back.
+do
+  local sim = trip_hull({ psi = 90 })
+  local tx, tz = sim.w.x + 400, sim.w.z
+  assert(sim.ap:command({ c = "goto", v = { x = tx, z = tz, y = 150, brg = 90 } }, sim.s))
+  local past, off_descending, low, climb_back = 0, 0, math.huge, 0
+  sim.run(400, function(s2, s)
+    local ph = s2.ap.nav.phase
+    if ph == "HOLD" or ph == "ARRIVED" then
+      past = math.max(past, s2.w.x - tx)
+      if s.vy < -0.5 then off_descending = math.max(off_descending, flat(s2, tx, tz)) end
+      low = math.min(low, s.y)
+      climb_back = math.max(climb_back, s.y - low)
+    end
+  end)
+  check(past < 1, "never passes the point by a block (7.9 before)", string.format("%.2f", past))
+  check(off_descending < 3, "descends only over the point", string.format("up to %.2f blocks off", off_descending))
+  check(climb_back < 1, "never climbs back during the descent (6.4 before)", string.format("%.2f", climb_back))
+  check(sim.ap.nav.phase == "ARRIVED" and flat(sim, tx, tz) < 0.5 and math.abs(sim.s.y - 150) < 0.5,
+    "ARRIVED on the point at Y 150", string.format("%s, off %.2f, y %.2f", tostring(sim.ap.nav.phase), flat(sim, tx, tz), sim.s.y))
+end
+
+print("46. Pusher strength is kept at sea level and scaled by the air density")
+-- Air at Y 600 is half as dense as at the ground: a strength learned up
+-- there made the pushers several times stronger than believed low down.
+-- (No write delay here: the learner does not model it, and it biases what
+-- is learned low.)
+do
+  local sim = trip_hull({ psi = 90, pusher_delay = 0, rcs_delay = 0 })
+  sim.cmd("spd", 20)
+  sim.cmd("mode", "CRUISE")
+  sim.run(40)
+  sim.cmd("spd", 0)
+  sim.run(30)
+  sim.cmd("mode", "HOVER")
+  sim.cmd("alt", 150)
+  sim.run(150)
+  local true_full = 32 * plant.rho(sim.s.y) / plant.rho(62)
+  local believed = sim.ap.spd:accel_full(sim.s)
+  check(math.abs(believed / true_full - 1) < 0.2, "learned at Y 600, believed within 20% at Y 150",
+    string.format("believed %.1f, true %.1f m/s^2 at full", believed, true_full))
 end
 
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))

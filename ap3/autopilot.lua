@@ -33,7 +33,8 @@ M.FLYING = { HOVER = true, CRUISE = true, NAV = true }
 local RCS = actuators.GROUPS.rcs
 
 -- saved: prior calibration ({ k =, A =, Dn =, yaw_b =, rcs_cap =, bow =, station = }) or nil.
--- sea_rho: air density at sea level (seeds the hover guess).
+-- sea_rho: air density at sea level (seeds the hover guess; the learned
+-- pusher and RCS strengths are kept at this density).
 -- tel: telemetry; the learned bow axis is applied to it.
 -- opts: { rcs_off = true while the helm steers (survives a reboot),
 --         nav = saved waypoints and route } or nil.
@@ -47,9 +48,10 @@ function M.new(cfg, saved, sea_rho, tel, opts)
     mode = "STBY",
     tgt = { alt = nil, brg = nil, spd = 0 },
     alt = altitude.new(cfg, saved, sea_rho),
-    spd = speed.new(cfg, saved),
-    hdg = heading.new(cfg, saved),
-    motion = motion.new(cfg, tel),
+    spd = speed.new(cfg, saved, sea_rho),
+    hdg = heading.new(cfg, saved, sea_rho),
+    motion = motion.new(cfg, tel, sea_rho),
+    sea_rho = sea_rho or 1,
     level = level.new(cfg),
     nav = nav.new(cfg, opts and opts.nav),
     station = station.new(cfg, saved),
@@ -341,9 +343,9 @@ function M:command(msg, s)
     -- Forget the learned RCS turning and sideways strength: back to the
     -- first guesses, learned again in flight. The corner layout from an RCS
     -- check and the bow axis stay.
-    self.hdg = heading.new(self.cfg, nil)
+    self.hdg = heading.new(self.cfg, nil, self.sea_rho)
     local frame_ok = self.motion.frame_ok
-    self.motion = motion.new(self.cfg, self.tel)
+    self.motion = motion.new(self.cfg, self.tel, self.sea_rho)
     self.motion.frame_ok = frame_ok
     self:log("RCS CAL RESET")
     return true, "rcs turning and sideways strength reset to the first guess"
@@ -450,10 +452,11 @@ function M:step(s, now, dt, bank)
     self:finish_check()
   end
 
-  local was_station = self.station_pt ~= nil
+  local prev_pt = self.station_pt
+  local was_station = prev_pt ~= nil
   self.station_pt = nil
   if self.mode == "NAV" then
-    local cmd = self.nav:step(s, now)
+    local cmd = self.nav:step(s, now, math.abs(self.spd:accel_full(s) * thr_f), self.spd.resting)
     self.tgt.alt, self.tgt.brg, self.tgt.spd = cmd.alt, cmd.brg, cmd.spd
     self.station_pt = cmd.station
     if not cmd.station then self:speed_to(cmd.spd, cmd.rate, s) end
@@ -463,6 +466,8 @@ function M:step(s, now, dt, bank)
   end
   if self.rcs_off then self.station_pt = nil end
   local pt = self.station_pt
+  -- A new point (NAV turning in place, then the stop) starts the integral afresh.
+  if pt and not (prev_pt and prev_pt.x == pt.x and prev_pt.z == pt.z) then self.station:reset() end
   -- Station keeping trims the lift finely (see actuator.lift_fine).
   bank.fine_lift = pt ~= nil
   if was_station and not pt then
@@ -476,12 +481,15 @@ function M:step(s, now, dt, bank)
   local rcs_set = {}
   for _, id in ipairs(RCS) do rcs_set[id] = bank:applied(id) end
   local u_set, sw_set = heading.applied(rcs_set, self.caps)
-  local auth = math.max(self.motion:sway_authority(), cfg.heading.min_sway_authority)
+  -- Sea-level sideways strength, and the share of it the air here gives.
+  local auth_sea = math.max(self.motion:sway_authority(), cfg.heading.min_sway_authority)
+  local dens = self.spd:density(s)
+  local auth = auth_sea * dens
   local pending = util.ssq(thr_applied) / (thr_cap * thr_cap) - thr_f
   local T = 0
   local sway_force = nil
   if pt then
-    local f, sw = self.station:command(s, pt.x, pt.z, dt, now, self.spd.A, auth, thr_f, sw_now, pending, sw_set - sw_now)
+    local f, sw = self.station:command(s, pt.x, pt.z, dt, now, self.spd.A, auth_sea, dens, thr_f, sw_now, pending, sw_set - sw_now)
     T = util.round(util.ssqrt(util.clamp(f, -1, 1)) * thr_cap)
     sway_force = sw
     self.spd.phase = "STATION"

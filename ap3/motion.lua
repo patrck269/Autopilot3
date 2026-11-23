@@ -10,7 +10,8 @@
 -- Every 0.5 s the hull-plane acceleration is fitted, per axis k, to
 --     a_k = h_k * thrust + g_k * sway - d_k * v_k
 -- (thrust, sway = forces the props are really applying, from the modelled
--- spin; v_k = hull-plane velocity).
+-- spin, times the air density relative to sea level, so h and g are
+-- sea-level strengths; v_k = hull-plane velocity).
 local util = require("ap3.util")
 local rls = require("ap3.rls")
 
@@ -20,9 +21,10 @@ M.__index = M
 local DEG = 180 / math.pi
 local atan2 = math.atan2 or math.atan
 
--- tel: telemetry (for its plane axes and current forward).
-function M.new(cfg, tel)
-  local self = setmetatable({ cfg = cfg, tel = tel, win = nil, n_thrust = 0,
+-- tel: telemetry (for its plane axes and current forward). sea_rho: air
+-- density at sea level.
+function M.new(cfg, tel, sea_rho)
+  local self = setmetatable({ cfg = cfg, tel = tel, sea = sea_rho or 1, win = nil, n_thrust = 0,
     bow = nil, frame_ok = false, votes = {} }, M)
   local f1, f2 = tel.plane(tel.forward)
   local r1, r2 = -f2, f1
@@ -47,7 +49,8 @@ function M:observe(s, thrust, sway, now)
   if span < 0.5 then return end
   self.win = { t0 = now, vx = s.vx, vy = s.vy, vz = s.vz, f = 0, sw = 0, v1 = 0, v2 = 0, n = 0 }
 
-  local mf, msw = w.f / w.n, w.sw / w.n
+  local d = util.clamp((s.rho or self.sea) / self.sea, 0.05, 2)
+  local mf, msw = w.f / w.n * d, w.sw / w.n * d
   -- Too little force to learn from: sideways the same absolute force as 5%
   -- at 2000 RPM (15000 RPM cap), fore/aft half the bow-vote force.
   local c = self.cfg.frame
@@ -91,7 +94,8 @@ function M:vote(src, b1, b2, n, min_mag)
   end
 end
 
--- Sideways strength of the RCS along the hull's starboard axis (m/s^2 at full).
+-- Sideways strength of the RCS along the hull's starboard axis (m/s^2 at
+-- full, sea-level density).
 function M:sway_authority()
   local f1, f2 = self.tel.plane(self.tel.forward)
   local g = self.fit[1].t[2] * -f2 + self.fit[2].t[2] * f1

@@ -109,9 +109,9 @@ return {
     -- Thrust model a = A*f - D*v|v| (f = normalised force, rpm^2/cap^2), learned in flight.
     -- First guesses measured on the 3.0 ship (2026-11-22, 10000 RPM cap):
     -- about 32 m/s^2 at full thrust, and (Eureka helm brake off) 0.05 m/s^2 of drag at 35 m/s.
-    accel_full = 30,      -- first guess: m/s^2 at full pusher thrust
+    accel_full = 30,      -- first guess: m/s^2 at full pusher thrust, sea-level air density
     min_accel_full = 0.3, -- m/s^2 at full thrust: a learned or saved value below this is not believed
-    max_accel_full = 60,  -- and above this (measured about 32; a save above it is discarded)
+    max_accel_full = 250, -- and above this (sea level; in-game fits gave 37-166; a save above it is discarded)
     top_speed = 900,      -- first guess: speed where full thrust equals drag
   },
 
@@ -154,6 +154,8 @@ return {
     sway_engage = 0.2,    -- m/s
     sway_settle = 0.08,   -- m/s
     sway_lag = 1.0,       -- s: drift the props' current spin will still add (they spin down slowly)
+    turn_yield_drift = 0.5, -- m/s sideways (off target): the turn slows and the sideways force gets the RCS first
+    turn_yield_rate = 3,  -- deg/s: turn rate cap while yielding
     yaw_lag = 1.0,        -- s: lead on yaw rate, including the enforced per-motor write interval
   },
 
@@ -170,6 +172,9 @@ return {
     translate_radius = 24, -- a stop this close when its leg starts is reached by translation alone
     climb_band = 1.5,      -- CLIMB ends within this many blocks of the transit altitude
     arrive = 1.0,          -- a stop counts as reached within this many blocks (with bearing and altitude)
+    stop_speed = 0.5,      -- HOLD: the speed loop brakes until ground speed is under this (m/s)
+    stop_push = 0.05,      -- and the pushers' props push under this (m/s^2); then station keeping holds the point
+    pause_vy = 0.3,        -- a paused descent holds the height where its vertical speed fell under this (m/s)
     settle_time = 3,       -- s settled at a stop before the next leg starts
     max_legs = 20,
     max_points = 30,

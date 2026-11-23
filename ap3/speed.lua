@@ -8,7 +8,9 @@
 --     a = A * f - D * v|v|
 -- A (acceleration at full thrust) and D (drag) are learned in flight by
 -- recursive least squares, so the feed-forward fits the real hull and the
--- PI term only cleans up the remainder. Acceleration that pitches the nose past
+-- PI term only cleans up the remainder. Both are kept at sea-level air
+-- density: prop thrust and drag go with the density, which halves between
+-- the ground and Y 600, so each step scales them by rho / sea_rho. Acceleration that pitches the nose past
 -- pitch_limit holds the thrust back and pauses the ramp until it recovers.
 local util = require("ap3.util")
 local rls = require("ap3.rls")
@@ -18,8 +20,9 @@ M.__index = M
 
 local S = 35 -- drag regressor scale, keeps both RLS columns near 1
 
--- saved: { A =, Dn =, thrust_cap = } from an earlier flight, or nil.
-function M.new(cfg, saved)
+-- saved: { A =, Dn =, thrust_cap = } from an earlier flight (sea-level
+-- density), or nil. sea_rho: air density at sea level.
+function M.new(cfg, saved, sea_rho)
   local c = cfg.speed
   local cap = cfg.motors.thrust_port.cap
   local A = c.accel_full
@@ -39,6 +42,8 @@ function M.new(cfg, saved)
   return setmetatable({
     c = c,
     A = A,
+    sea = sea_rho or 1,
+    dens = 1, -- rho / sea_rho at the last step
     -- RPM per second the thrust really changes by: paced writes, or the
     -- props' own spin rate (prop_slew per tick), whichever is slower.
     write_rate = math.min(cfg.actuator.slew.thrust / cfg.actuator.min_interval.thrust, cfg.actuator.prop_slew * 20),
@@ -58,8 +63,19 @@ function M.new(cfg, saved)
   }, M)
 end
 
+-- Air density relative to sea level at the hull.
+function M:density(s)
+  return util.clamp((s.rho or self.sea) / self.sea, 0.05, 2)
+end
+
+-- Drag deceleration at speed v and the last step's density.
 function M:drag(v)
-  return self.Dn / (S * S) * v * math.abs(v)
+  return self.Dn * self.dens / (S * S) * v * math.abs(v)
+end
+
+-- Acceleration at full thrust in the air at s (default: the last step's).
+function M:accel_full(s)
+  return self.A * (s and self:density(s) or self.dens)
 end
 
 -- The bow axis changed: what was learned along the old axis is wrong.
@@ -118,7 +134,8 @@ function M:observe(s, applied_f, now)
   local h = math.rad(s.hdg)
   local y = ((s.vx - w.vx0) * math.sin(h) - (s.vz - w.vz0) * math.cos(h)) / span
 
-  self.est:update({ f, x2 }, y)
+  local d = self:density(s)
+  self.est:update({ f * d, x2 * d }, y)
   local t = self.est.t
   t[1] = util.clamp(t[1], self.c.min_accel_full, self.c.max_accel_full)
   t[2] = util.clamp(t[2], 0, 60)
@@ -132,13 +149,15 @@ end
 function M:command(s, dt, cap, applied_rpm, pending, fmax)
   local c = self.c
   local v = s.v_fwd
+  self.dens = self:density(s)
+  local A = self:accel_full()
   local applied_f = util.ssq(applied_rpm or 0) / (cap * cap)
   local prop_f = applied_f - (pending or 0)
   -- Include the impulse left while paced writes ramp the motor to zero.
   -- RPM ramps linearly, so its squared force averages one third of full.
   local horizon = math.max(c.thrust_lag, math.abs(applied_rpm or 0) / (3 * self.write_rate))
-  local coming = self.A * (pending or 0) * horizon
-  local net_accel = self.A * prop_f - self:drag(v)
+  local coming = A * (pending or 0) * horizon
+  local net_accel = A * prop_f - self:drag(v)
 
   -- The reference eases into the target (jerk-limited): the thrust that is
   -- accelerating the hull takes seconds to shed through prop spin.
@@ -147,9 +166,10 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
   -- Starting from rest, the reference waits until the props push toward it:
   -- pushers left turning the other way (station keeping) pass through 0, a
   -- write interval each way, and a hull starting that late behind a running
-  -- reference overshoots catching up.
+  -- reference overshoots catching up. A push under 0.05 m/s^2 the wrong
+  -- way is not worth the wait.
   local dir = util.sign(self.target - self.v_ref)
-  local waiting = math.abs(self.v_ref) < 0.5 and math.abs(v) < 0.5 and dir ~= 0 and prop_f * dir < 0
+  local waiting = math.abs(self.v_ref) < 0.5 and math.abs(v) < 0.5 and dir ~= 0 and A * prop_f * dir < -0.05
   if not self.pitch_hold and not waiting then
     self.v_ref = util.approach(self.v_ref, self.target, math.max(rate, 0.05) * dt)
   end
@@ -185,7 +205,7 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
   self.limited = 0
   if accel > up then accel = up; self.limited = 1 end
   if accel < -up then accel = -up; self.limited = -1 end
-  local f = (accel + self:drag(v)) / self.A
+  local f = (accel + self:drag(v)) / A
   self.saturated = 0
   local top = fmax or 1
   if f > top then f = top; self.saturated = 1 end
@@ -247,7 +267,7 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
         f = self.held_f
       end
     elseif inside and (math.abs(projected - self.target) < c.hold_band or self.in_band >= 2 * self.write_wait) then
-      self.held_f = util.clamp((self:drag(self.target) + self.integ) / self.A, -1, 1)
+      self.held_f = util.clamp((self:drag(self.target) + self.integ) / A, -1, 1)
       f = self.held_f
     end
   else
