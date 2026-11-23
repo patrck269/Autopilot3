@@ -62,7 +62,7 @@ In HOVER, type `rcs check` (or SYS: RCS CHECK, then CONF CHECK). Each of the fou
 
 For yaw-only responses, the log also reports the lateral pull direction **if the named mounting location is correct**. For example, a right turn from a correctly mounted bow-port motor indicates a starboard pull, not its expected port pull. This is a direction warning, not proof that its mounting label is correct.
 
-If the sideways brake runs for 10 s and the drift has grown, it stops and SYS shows "SIDEWAYS BRAKE STOPPED: IT MADE THE DRIFT WORSE". That means a wrong bow axis or wrong corner labels. It starts again on the next HOVER or CRUISE engagement.
+The sideways brake never gives up. If a drift grows while it brakes, the bow axis or the corner labels are wrong: run `rcs check`.
 
 ## Flying
 
@@ -195,7 +195,7 @@ It runs all the time, with no rest band: fore/aft with the pushers, sideways wit
 
 The bearing error sets a yaw-rate command, at most 15°/s; the planned 0.15°/s² arrival deceleration means a 180° turn peaks near 9°/s. A PI loop on yaw rate gives a yaw acceleration. Commands are divided by the learned turning strength. The RCS cap is 15000 RPM; strength guesses, bounds and force-share thresholds keep the absolute forces they had at the old 4000 RPM cap (force scales with RPM squared), and saved turning calibration rescales automatically using its recorded cap. Turning is learned from half-second windows with enough turn force. Turning strength stays between 5.6 and 2800 deg/s² at full RCS. If the RCS pulls at full for 3 s and the heading is still off, SYS shows "RCS AT FULL: HEADING NOT HELD".
 
-Station keeping: a heading correction starts when the heading is more than 2° off (1° in CRUISE and NAV TRANSIT) or the hull turns faster than 0.5°/s, and stops within 0.5°. In between, the RCS holds the trim its integral learned (an off-centre thrust line, say) or rests. Outside station keeping (which sets the sideways force itself) the sideways brake holds sideways velocity at 0. An error over 0.2 m/s, including drift the ship already had when the autopilot took over, is braked with the same-side pair until it is under 0.08 m/s; then the sideways force rests. If braking for 10 s has made the error worse, the brake stops (wrong bow axis or corner labels); that window starts again while the hull turns, since a turn at speed swings the hull's momentum into sideslip. The smallest RCS pulse is 100 RPM. Heading gets first call on the RCS.
+Station keeping: a heading correction starts when the heading is more than 2° off (1° in CRUISE and NAV TRANSIT) or the hull turns faster than 0.5°/s, and stops within 0.5°. In between, the RCS holds the trim its integral learned (an off-centre thrust line, say) or rests. Outside station keeping (which sets the sideways force itself) the sideways brake holds sideways velocity at 0. An error over 0.2 m/s, including drift the ship already had when the autopilot took over, is braked with the same-side pair until it is under 0.08 m/s; then the sideways force rests. The smallest RCS pulse is 100 RPM. Heading gets first call on the RCS.
 
 Clockwork props don't follow the motor at once: the bearing changes spin by at most 32 RPM a tick, so 0 → 2000 RPM takes about 3.1 s, and spinning down takes as long. The flight loop models that spin. Every learner uses the force the props are really making, not the commanded RPM. The heading loop gets a lead for turn force still on its way, and the sideslip brake lets go early when the remaining spin will finish the job.
 

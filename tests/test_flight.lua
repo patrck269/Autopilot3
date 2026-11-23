@@ -348,9 +348,12 @@ for _, case in ipairs({ { "90 deg off", { x = 0, y = 0, z = -1 } }, { "180 deg o
     worst = math.max(worst, math.abs(true_side()))
   end)
   -- 90 deg off: the drift shows up as fore/aft, the pushers brake it
-  -- and reveal the bow. 180 deg off: a sideways drift can't reveal it, the
-  -- brake pushes the wrong way and its guard stops it.
-  check(worst < 4, case[1] .. ": the drift is never made much worse", string.format("worst %.2f m/s (started 3)", worst))
+  -- and reveal the bow. 180 deg off: a sideways drift can't reveal it and
+  -- the brake pushes the wrong way until a cruise shows the bow (the guard
+  -- that used to stop it also stopped the brake for real slides in game).
+  if case[1] == "90 deg off" then
+    check(worst < 4, case[1] .. ": the drift is never made much worse", string.format("worst %.2f m/s (started 3)", worst))
+  end
   check(switches <= 4, case[1] .. ": brake does not flap port/starboard", switches .. " side changes")
   -- The bow is learned from the pushers' push, so it may need a cruise.
   local brg = util.round(sim.s.hdg) % 360

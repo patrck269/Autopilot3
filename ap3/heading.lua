@@ -70,7 +70,6 @@ end
 -- Engaging a mode or switching the bow axis: start the loops afresh.
 function M:reset()
   self.integ = 0
-  self.sway_failed = false
   self.sway_active = false
 end
 
@@ -149,7 +148,7 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
     local room = 1 - math.abs(u)
     return u, util.clamp(sway.force, -math.min(slimit, room), math.min(slimit, room))
   end
-  if sway and not self.sway_failed then
+  if sway then
     local err = sway.drift - (sway.target or 0)
     local ahead = err + (sway.coming or 0)
     self.drift = sway.drift
@@ -157,21 +156,8 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
       if math.abs(ahead) < c.sway_settle or math.abs(err) < c.sway_settle then self.sway_active = false end
     elseif math.abs(err) > c.sway_engage then
       self.sway_active = true
-      self.sway_t, self.sway_start = 0, math.abs(err)
     end
     if self.sway_active then
-      -- Guard: braking for a while and the drift has grown? Then the brake
-      -- is pushing the wrong way (wrong bow axis or corner labels): stop.
-      -- A turn at speed swings the hull's own momentum into sideslip, so
-      -- the guard window starts again while the hull turns.
-      if math.abs(s.yaw_rate) > 2 * c.engage_rate then
-        self.sway_t, self.sway_start = 0, math.max(self.sway_start, math.abs(err))
-      end
-      self.sway_t = self.sway_t + dt
-      if self.sway_t > c.sway_guard_time and math.abs(err) > 1.2 * self.sway_start + 0.2 then
-        self.sway_failed, self.sway_active = true, false
-        return u, 0
-      end
       local auth = math.max(sway.auth, c.min_sway_authority)
       local slimit = sway.limit or 1
       sw = util.clamp(-c.sway_gain * ahead / auth, -slimit, slimit)

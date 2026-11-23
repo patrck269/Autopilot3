@@ -153,7 +153,6 @@ return {
     sway_gain = 0.3,      -- (m/s^2) per m/s of sideslip
     sway_engage = 0.2,    -- m/s
     sway_settle = 0.08,   -- m/s
-    sway_guard_time = 10, -- s: if the drift has grown after braking this long, the brake stops
     sway_lag = 1.0,       -- s: drift the props' current spin will still add (they spin down slowly)
     yaw_lag = 1.0,        -- s: lead on yaw rate, including the enforced per-motor write interval
   },

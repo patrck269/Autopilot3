@@ -562,9 +562,6 @@ function M:alerts(s, now)
   if flying and self.hdg.sway_active and not (self.motion.frame_ok or self.bow_learned) then
     list[#list + 1] = "BOW AXIS NOT CONFIRMED YET: SIDEWAYS BRAKE GENTLE"
   end
-  if flying and self.hdg.sway_failed then
-    list[#list + 1] = "SIDEWAYS BRAKE STOPPED: IT MADE THE DRIFT WORSE (RUN 'rcs check')"
-  end
   if s and math.abs(s.yaw_rate) > 3 * self.cfg.heading.max_rate then
     list[#list + 1] = "SPINNING " .. util.fmt(s.yaw_rate, 0) .. " DEG/S"
   end
