@@ -144,7 +144,13 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
   -- accelerating the hull takes seconds to shed through prop spin.
   local rate = math.min(self.rate, math.sqrt(2 * c.jerk * math.abs(self.target - self.v_ref)))
   local before = self.v_ref
-  if not self.pitch_hold then
+  -- Starting from rest, the reference waits until the props push toward it:
+  -- pushers left turning the other way (station keeping) pass through 0, a
+  -- write interval each way, and a hull starting that late behind a running
+  -- reference overshoots catching up.
+  local dir = util.sign(self.target - self.v_ref)
+  local waiting = math.abs(self.v_ref) < 0.5 and math.abs(v) < 0.5 and dir ~= 0 and prop_f * dir < 0
+  if not self.pitch_hold and not waiting then
     self.v_ref = util.approach(self.v_ref, self.target, math.max(rate, 0.05) * dt)
   end
   self.a_ref = (self.v_ref - before) / dt

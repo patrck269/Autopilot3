@@ -49,6 +49,8 @@ return {
     prop_slew = 32,       -- Clockwork props change spin by at most this RPM per tick
     min_interval = { lift = 1.0, thrust = 1.0, rcs = 1.0 }, -- seconds between writes to one motor
     deadband = { lift = 10, thrust = 15, rcs = 100 },       -- smallest RPM change worth a write
+    lift_fine = 5,        -- lift deadband while station keeping (10 cycled altitude 0.5 blocks live; 3 crowds the pushers' writes)
+    lift_priority = 20,   -- a lift step this big (RPM, any corner) is written before pushers and RCS
     weight = { lift = 3, thrust = 2, rcs = 1.5 },            -- which group gets the next write
     slew = { thrust = 900, lift = 300, rcs = 7500 },         -- largest RPM change per write
     rcs_min_rpm = 100,    -- smaller RCS commands are sent as 0 (finer pulses for a strong RCS)

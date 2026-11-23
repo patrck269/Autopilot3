@@ -378,6 +378,7 @@ function M:step(s, now, dt, bank)
   local out = {}
   local cfg = self.cfg
   bank.exact = self.mode == "DEBUG"
+  bank.fine_lift = false
   local thr_applied = bank:effective("thrust")
   local thr_cap = self.caps.thrust_port
 
@@ -462,6 +463,8 @@ function M:step(s, now, dt, bank)
   end
   if self.rcs_off then self.station_pt = nil end
   local pt = self.station_pt
+  -- Station keeping trims the lift finely (see actuator.lift_fine).
+  bank.fine_lift = pt ~= nil
   if was_station and not pt then
     -- Station keeping drove the pushers directly: the speed loop restarts
     -- from the speed the hull has now.

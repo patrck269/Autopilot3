@@ -187,8 +187,8 @@ function M:next_value(c, now, in_batch)
   local delta = want - have
   -- Deadband only between two running speeds: starting or stopping is always
   -- written. DEBUG (self.exact) writes exactly what it asks for.
-  if not in_batch and not self.exact and want ~= 0 and have ~= 0
-    and math.abs(delta) < self.cfg.deadband[c.group] then
+  local deadband = (c.group == "lift" and self.fine_lift) and self.cfg.lift_fine or self.cfg.deadband[c.group]
+  if not in_batch and not self.exact and want ~= 0 and have ~= 0 and math.abs(delta) < deadband then
     return nil
   end
   local slew = self.cfg.slew[c.group]
@@ -271,8 +271,9 @@ function M:service(now)
   end
 
   -- Otherwise the lift, then the largest weighted need. A lift trim (no
-  -- corner moving by twice the lift deadband) waits its turn like the
-  -- others: holding altitude closed-loop trims the lift often.
+  -- corner moving by lift_priority RPM) waits its turn like the others:
+  -- holding altitude closed-loop trims the lift often, and fine trims
+  -- jumping the queue would starve the pushers.
   local best, best_need = nil, -1
   for _, name in ipairs({ "lift", "rcs", "thrust" }) do
     local list = self:group_due(name, now)
@@ -283,7 +284,7 @@ function M:service(now)
         need = math.max(need, math.abs((c.desired or 0) - (c.applied or 0)) / c.cap * self.cfg.weight[name])
         step = math.max(step, math.abs(w.v - (c.applied or 0)))
       end
-      if name == "lift" and step >= 2 * self.cfg.deadband.lift then need = need + 1000 end
+      if name == "lift" and step >= self.cfg.lift_priority then need = need + 1000 end
       if need > best_need then best, best_need = list, need end
     end
   end
