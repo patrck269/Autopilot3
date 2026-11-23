@@ -86,3 +86,55 @@ Cruise initially overshot from a plain hover: earlier probes measured 1.0–1.9 
   - the world as `RIBBED_pre-restore_…`
   - computer 3's files as `pre-51c1070/`
   - computer 12's 1.0-era install as `old-ap3-v1/`
+- **Server-owned config.** The server rewrites `vs_eureka.toml` from memory when it shuts down, so an edit made while it runs is lost. Edit it only while the server is stopped. A failed `sed -i` once left the file empty; keep a copy (`vs_eureka.toml.before-antivelocity-0`) before editing.
+- **"Latest backup before 5:14".** Asked for this after a crash at about 5:14, I restored 17:13. Patrick wanted 17:08, the last one before the trouble started. Each restore of the 42 GB world took 17–21 minutes. When the time is near the incident, confirm which backup before stopping the server.
+- **Do not restart a computer that is flying.** I restarted computer 12 to load an update while Patrick was climbing in NAV at 10 m/s. The restart dropped NAV. HOVER then braked at 8 m/s, which my test script's abort guard read as a fault, and it switched the ship to CRUISE. Read the status (mode, ground speed) first, and restart only in HOVER or STBY or when asked. An abort guard must know which states are normal right after its own action.
+- **Stale status.** `ap3_host.status` is only written while the host inbox is in use, so an old file means "no command sent lately", not "computer off". Send a harmless command (`wp list`) and check the file's time.
+
+## 8. Removing a damper changes every loop
+
+Eureka's helm brake (`linearStabilizeMaxAntiVelocity`) cancelled up to about 0.84 m/s² whenever no player was seated. The first live run at 1500 RPM pushers moved only 0.08 m/s. With the brake off (`963b4ad`) the hull has almost no drag (about 0.05 m/s² at 35 m/s), and loops tuned with that brake lost their damping:
+
+| 3-minute hover, old build | Brake on | Brake off |
+|---|---|---|
+| Drift | 0.04 blocks | 62 blocks |
+| Hull moved during a 90° turn | 0.05 blocks | 20 blocks |
+
+**Next time:** when an outside force is removed or added, list which loops relied on it (here: every "rest when close" behaviour) and retest each before shipping.
+
+## 9. On a hull without drag, a hold must never rest
+
+The first position hold (`963b4ad`, `8db1884`) rested within 0.75 blocks and drove back from 1.5. Without drag, any rest drifts, so it cycled through that band by design. Asking the pushers for up to 4 m/s² made it worse: their RPM took seconds to reverse, and a live dock hold swung ±12 blocks at ±3 m/s. `52c206a` replaced it with continuous station keeping (`ap3/station.lua`): a speed-toward-the-point loop capped at 0.15 m/s², steering on the position 1 s ahead, with an integral and no rest band. Live it held 0.12 blocks fore/aft and 0.07 sideways over three minutes.
+
+**Next time:** for a requirement like "under 0.5 blocks", start from a continuous loop and give it a hard number to meet in a test (here test 42). Hysteresis bands only fit plants that settle on their own.
+
+## 10. Check the diagnosis against more than one recording
+
+NAV HOLD drifted away with a learned pusher strength of 84 m/s². I assumed that value was mislearned, so `c796cc3` discarded it and stopped the learner during holds. The next recording swung the hull ±4 m/s on pushers four times stronger than the autopilot then believed. Fitting `a = A·ρ·RPM²` to every recording of the day gave very different sea-level strengths:
+
+| Recording | Highest pusher RPM | Fitted A at sea level (m/s² at full) |
+|---|---|---|
+| NAV flyaway | 2809 | 37.5 |
+| Dock swing | 3204 | 45.6 |
+| Cruise test | 3483 | 63.8 |
+| HOVER at Y 70 | 569 | 156 |
+| HOVER at Y 250 | 1288 | 166 |
+
+No thrust exponent between 0.5 and 2 made them agree. Pitch did not explain it either (correlation −0.1). The cause is still unknown, so station keeping now learns its own gain per axis at the forces it uses, and saves it (`46b6f0d`). One part of `c796cc3` was right: the learner read turns as thrust (a 90° turn at 20 m/s skewed A by a third), so it now uses world velocity along the bow.
+
+**Next time:** before acting on "the learned value is wrong", fit the model to several recordings. If the fits disagree, the model is incomplete, and the controller must cope with the spread instead of trusting one number.
+
+## 11. Put the measured lag and disturbances in the model before tuning
+
+The hull model sent motor writes to the props at once, with no disturbances. In it the old hold settled; at 20 RPM a tick of prop spin it diverged (test 40). The recordings fit a 0.4 s write delay and about 25 RPM a tick. `tests/world.lua` now has `cmd_delay`, `push_x`/`push_z` and `gust`. Every station-keeping setting was swept against pushers and RCS three to four times off, slow props, a starting drift and gusts, before choosing one (worst case 0.26 blocks at the chosen setting, against 1–3 for others).
+
+**Next time:** fit delay and noise from a live recording first, add them to the model, and tune against the worst plausible mix, not the nominal hull.
+
+## 12. A check that flips on an unrelated change has found a thin margin
+
+Lowering the lift deadband from 10 to 3 RPM, a change to the lift only, made cruise checks fail: a 30 m/s start overshot by 2.9 m/s, and the 45 m/s reversal passed the cap at 37. Two causes came out of tracing them:
+
+- **Write slots.** Lift trims jumped the write queue whenever a corner moved twice the deadband. At 3 RPM that was almost every trim, and it delayed pusher writes. The queue jump now has its own threshold (`actuator.lift_priority`, 20 RPM). The fine deadband (5 RPM) applies only while station keeping (`f9e8583`).
+- **A late start.** Pushers left turning backwards by station keeping must pass through 0, one write interval each way. The speed reference ran on without the hull and the loop overshot catching up. The reference now waits, when starting from rest, until the props push its way.
+
+**Next time:** when a check fails after a change to another subsystem, trace why before retuning anything. The margin it found is usually real.
