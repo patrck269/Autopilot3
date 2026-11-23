@@ -99,7 +99,8 @@ end
 -- deadzone: bearing error (deg) tolerated before an active correction starts.
 -- sway: { drift = m/s toward starboard, target = wanted m/s toward starboard
 -- (nil = 0), auth = m/s^2 at full sway force, limit = largest sway force
--- allowed, coming = m/s the props' current spin will still add to the drift }
+-- allowed, coming = m/s the props' current spin will still add to the drift,
+-- force = normalised sway force station keeping wants (then used as is) }
 -- or nil to leave sideslip alone.
 -- pending: turn force the motors are set to but the props have not yet
 -- reached (they spin up and down at 32 RPM a tick); it adds a lead to the
@@ -140,6 +141,14 @@ function M:command(s, bearing, dt, deadzone, sway, pending)
   -- have once the props' current spin has played out.
   local sw = 0
   self.drift = 0
+  if sway and sway.force then
+    -- Station keeping computes the sway force itself (ap3/station.lua).
+    self.drift = sway.drift
+    self.sway_active = sway.force ~= 0
+    local slimit = sway.limit or 1
+    local room = 1 - math.abs(u)
+    return u, util.clamp(sway.force, -math.min(slimit, room), math.min(slimit, room))
+  end
   if sway and not self.sway_failed then
     local err = sway.drift - (sway.target or 0)
     local ahead = err + (sway.coming or 0)

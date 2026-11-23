@@ -34,6 +34,11 @@ W.DEFAULTS = {
   pitch_load = 0,       -- deg/s^2 nose up from an off-centre load
   roll_load = 0,        -- deg/s^2 starboard down from an off-centre load
   prop_slew = 32,       -- Clockwork bearing: spin moves half way to the target each tick, at most this RPM
+  cmd_delay = 0,        -- ticks before a pusher or RCS write reaches the prop (fore/aft recordings fit about 8;
+                        -- the lift is left undelayed: altitude holds 0.25 blocks live, the model would not with 8)
+  push_x = 0,           -- steady world-frame push on the hull, m/s^2 (a slight tilt of the lift, say)
+  push_z = 0,
+  gust = 0,             -- +- m/s^2 random push each tick, independent per axis
   ground_y = 64,
   noise = 0,            -- +- m/s added to each velocity reading
   v_side = 0,           -- starting sideways drift, m/s (+ = starboard)
@@ -90,7 +95,7 @@ function W.new(motors, opts, gravity)
     x = 0, y = opts.y or p.ground_y, z = 0,
     vx = 0, vy = 0, vz = 0,
     psi = opts.psi or 0, r = 0, theta = 0, q = 0, phi = 0, pr = 0,
-    rpm = {}, cmd = {}, writes = 0,
+    rpm = {}, cmd = {}, writes = 0, queue = {},
     flick = {}, peak = {}, -- Create flicker score of each motor's prop bearing
     devices = {},
     ticks = 0, lonely = 0, lonely_run = 0, lonely_max = 0, -- RCS corner pulling without its diagonal partner
@@ -132,6 +137,7 @@ function W.new(motors, opts, gravity)
         if not PUSHERS[id] then assert(v >= 0, id .. " given negative RPM: " .. v) end
         if v ~= w.cmd[id] then bump(id, w.cmd[id], v) end
         w.cmd[id] = v
+        table.insert(w.queue, { at = w.ticks + (LIFT_SET[id] and 0 or p.cmd_delay), id = id, v = v })
         w.writes = w.writes + 1
       end,
       getSpeed = function() return w.cmd[id] end,
@@ -167,9 +173,17 @@ function W.new(motors, opts, gravity)
   w.aero = { getAirDensity = function(y) return W.rho(y or w.y) end }
 
   -- Advance the hull by dt seconds (one game tick is 0.05).
+  local target = {}
+  for id in pairs(motors) do target[id] = w.cmd[id] end
   function w.step(dt)
     local rho = W.rho(w.y)
-    for id, v in pairs(w.cmd) do
+    -- Writes reach the props cmd_delay ticks later.
+    local keep = {}
+    for _, q in ipairs(w.queue) do
+      if q.at <= w.ticks then target[q.id] = q.v else keep[#keep + 1] = q end
+    end
+    w.queue = keep
+    for id, v in pairs(target) do
       -- PropellerBearingBlockEntity.tick: omega += clamp((target - omega) / 2, +-32 RPM)
       w.rpm[id] = w.rpm[id] + math.max(-p.prop_slew, math.min(p.prop_slew, (v - w.rpm[id]) / 2))
       w.flick[id] = math.max(0, w.flick[id] - 1)
@@ -214,8 +228,10 @@ function W.new(motors, opts, gravity)
     local vs = w.vx * rx + w.vz * rz
     local af = a_thr - p.drag1 * vf - p.drag2 * vf * math.abs(vf)
     local as = a_side - p.side_drag * vs
-    w.vx = w.vx + (af * fx + as * rx) * dt
-    w.vz = w.vz + (af * fz + as * rz) * dt
+    local gx = p.push_x + (p.gust > 0 and (math.random() * 2 - 1) * p.gust or 0)
+    local gz = p.push_z + (p.gust > 0 and (math.random() * 2 - 1) * p.gust or 0)
+    w.vx = w.vx + (af * fx + as * rx + gx) * dt
+    w.vz = w.vz + (af * fz + as * rz + gz) * dt
     w.vy = w.vy + a_lift * dt
     w.x = w.x + w.vx * dt
     w.z = w.z + w.vz * dt

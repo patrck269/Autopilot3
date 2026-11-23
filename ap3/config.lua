@@ -168,19 +168,31 @@ return {
     pass_radius = 12,      -- fly-through waypoint: the next leg starts inside this distance
     translate_radius = 24, -- a stop this close when its leg starts is reached by translation alone
     climb_band = 1.5,      -- CLIMB ends within this many blocks of the transit altitude
-    hold_engage = 1.5,     -- position hold drives toward the point beyond this distance (blocks)
-    hold_settle = 0.75,    -- and rests inside this distance (with ground speed < 0.3 m/s)
-    hold_margin = 0.5,     -- translation profile reaches 0 this far from the point
-    hover_capture = 0.5,   -- HOVER holds the point where ground speed first drops under this (m/s)
-    hold_gain = 0.25,      -- (m/s) per block of position error
-    hold_accel = 0.3,      -- planned translation deceleration, m/s^2
-    hold_lead = 2.5,       -- s: position hold steers on the position this far ahead (pusher and RCS lag)
-    hold_fwd_max = 2,      -- fastest fore/aft translation, m/s
-    hold_max_accel = 0.3,  -- largest fore/aft acceleration position hold asks of the pushers, m/s^2 (0.6 swings with live prop lag)
-    hold_side_max = 2,     -- fastest sideways translation, m/s
+    arrive = 1.0,          -- a stop counts as reached within this many blocks (with bearing and altitude)
     settle_time = 3,       -- s settled at a stop before the next leg starts
     max_legs = 20,
     max_points = 30,
+  },
+
+  -- Station keeping (HOVER, NAV HOLD, DOCK): see ap3/station.lua.
+  station = {
+    capture = 0.5,         -- HOVER takes its point once ground speed drops under this (m/s), where the hull will stop
+    lead = 1.0,            -- s: steer on the hull's position this far ahead (server delay, paced writes, prop spin)
+    pos_gain = 0.25,       -- (m/s) wanted per block of error
+    plan_accel = 0.08,     -- m/s^2: the wanted speed slows at this rate approaching the point
+    vel_gain = 0.4,        -- m/s^2 per m/s of speed error
+    int_gain = 0.004,      -- m/s^2 per block-second (cancels steady pushes)
+    int_limit = 0.08,      -- m/s^2
+    int_zone = 2,          -- blocks: the integral only runs this close to the point
+    max_accel = 0.15,      -- m/s^2 asked of the pushers or the RCS
+    fwd_max = 2,           -- fastest fore/aft move, m/s
+    side_max = 1.5,        -- fastest sideways move, m/s
+    delay = 0.4,           -- s from a write to the props answering (fitted from recordings)
+    learn_window = 0.5,    -- s per sample of each axis' learned gain
+    learn_forget = 0.98,   -- per sample (about 25 s memory)
+    learn_min_accel = 0.01, -- m/s^2 of modelled push needed to learn from a sample
+    min_gain = 0.2,        -- learned gain bounds (real strength / the strength the speed and sway loops learned)
+    max_gain = 8,
   },
 
   -- Flight recorder ('rec on'): one CSV row every 'every' control steps.

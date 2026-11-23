@@ -11,9 +11,10 @@
 -- held at the transit altitude.
 --   CLIMB    to the transit altitude, turning toward the point, no speed
 --   TRANSIT  bow on the point; speed brakes along sqrt(2 a d) to the next stop
---   HOLD     at a stop: translate fore/aft (pushers) and sideways (RCS)
---            onto the point without turning, descend, turn to the bearing;
---            settled there for settle_time, the next leg starts
+--   HOLD     at a stop: station keeping (ap3/station.lua) moves the hull
+--            fore/aft (pushers) and sideways (RCS) onto the point without
+--            turning, descends, turns to the bearing; settled there for
+--            settle_time, the next leg starts
 --   ARRIVED  the last stop reached: keeps holding
 -- A stop closer than translate_radius when its leg starts is reached in
 -- HOLD alone (no turn toward it).
@@ -57,35 +58,6 @@ local function dist(ax, az, bx, bz)
   return math.sqrt((ax - bx) ^ 2 + (az - bz) ^ 2)
 end
 
--- Magnitude-limited translation speed toward a point e blocks away.
-local function toward(e, vmax, c)
-  local m = math.abs(e) - c.hold_margin
-  if m <= 0 then return 0 end
-  return util.sign(e) * math.min(vmax, c.hold_gain * m, math.sqrt(2 * c.hold_accel * m))
-end
-
--- Position hold by translation: the fore/aft speed (pushers) and sideways
--- speed (RCS) that move the hull from s onto world point (x, z) without
--- turning. state.hold_on carries the engage/settle hysteresis. Returns spd,
--- side (m/s, starboard positive) and the distance.
-function M.translate(c, state, x, z, s)
-  local dx, dz = x - s.x, z - s.z
-  local d = math.sqrt(dx * dx + dz * dz)
-  local h = math.rad(s.hdg)
-  local along = dx * math.sin(h) - dz * math.cos(h)
-  local side = dx * math.cos(h) + dz * math.sin(h)
-  if d > c.hold_engage then
-    state.hold_on = true
-  elseif d < c.hold_settle and s.gs < 0.3 then
-    state.hold_on = false
-  end
-  if not state.hold_on then return 0, 0, d end
-  -- Steer on where the hull will be once the pushers and RCS have answered
-  -- (hold_lead s), not where it is: that damps the overshoot.
-  return toward(along - c.hold_lead * s.v_fwd, c.hold_fwd_max, c),
-    toward(side - c.hold_lead * s.v_side, c.hold_side_max, c), d
-end
-
 -- saved: the /ap3_nav.dat table ({ points =, route = }) or nil.
 function M.new(cfg, saved)
   local c = cfg.nav
@@ -98,7 +70,6 @@ function M.new(cfg, saved)
     phase = nil,
     speed = c.speed,
     transit_alt = nil,
-    hold_on = false,
     settled_since = nil,
     last = nil,
   }, M)
@@ -176,7 +147,6 @@ end
 function M:enter_hold(leg, s)
   self.phase = "HOLD"
   self.hold_brg = leg.brg or util.round(s.hdg) % 360
-  self.hold_on = true
   self.settled_since = nil
   self.over = false -- set once over the point: the descent is not undone by a drift
   self.pause_alt = nil
@@ -213,7 +183,6 @@ end
 function M:start(list, s)
   self.active = list
   self.i = 1
-  self.hold_on = false
   self.docking = false
   self:begin_leg(s)
 end
@@ -255,9 +224,10 @@ function M:remaining(d)
   return remain
 end
 
--- One control step while NAV flies. Returns { alt, brg, spd, rate, side }:
+-- One control step while NAV flies. Returns { alt, brg, spd, rate, station }:
 -- target altitude, bearing, forward speed (m/s), the slowest ramp for that
--- speed (m/s^2, or nil) and the sideways velocity target (m/s to starboard).
+-- speed (m/s^2, or nil), and in HOLD/ARRIVED the point { x, z } station
+-- keeping holds (spd is then unused).
 function M:step(s, now)
   local c = self.c
   local leg = self.active[self.i]
@@ -291,7 +261,7 @@ function M:step(s, now)
     cmd = { alt = self.transit_alt, brg = brg_to, spd = off > c.align_deg and 0 or v,
       rate = CATCH * c.brake_accel, side = 0 }
   else
-    -- HOLD / ARRIVED: descend last, translate onto the point, turn in place.
+    -- HOLD / ARRIVED: descend last, station-keep on the point, turn in place.
     -- Once over the point (within 3 blocks) the descent starts; drifted
     -- further out it pauses where it is, and goes on when back over it.
     local alt = self.transit_alt
@@ -306,10 +276,9 @@ function M:step(s, now)
         alt = leg.y
       end
     end
-    local spd, sway = M.translate(c, self, leg.x, leg.z, s)
-    cmd = { alt = alt, brg = self.hold_brg, spd = spd, rate = c.hold_accel, side = sway, hold = true }
+    cmd = { alt = alt, brg = self.hold_brg, spd = 0, station = { x = leg.x, z = leg.z } }
     if self.phase == "HOLD" then
-      local settled = d <= c.hold_engage and math.abs(util.wrap180(self.hold_brg - s.hdg)) <= 2
+      local settled = d <= c.arrive and math.abs(util.wrap180(self.hold_brg - s.hdg)) <= 2
         and math.abs(s.y - alt) <= 1.5
       if not settled then
         self.settled_since = nil

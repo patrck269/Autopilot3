@@ -99,13 +99,7 @@ end
 -- Learn A and D from 0.5 s windows of measured acceleration: the change of
 -- the world velocity along the bow, so a turn (which swings the velocity
 -- into the bow axis without any thrust) is not read as acceleration.
--- Position hold does not learn: its forces are a few thousandths of full,
--- so any other push on the hull reads as an enormous A (live: 84 m/s^2).
 function M:observe(s, applied_f, now)
-  if self.accel_cap then
-    self.win = nil
-    return
-  end
   local w = self.win
   if w == nil then
     self.win = { t0 = now, vx0 = s.vx, vz0 = s.vz, f = 0, vv = 0, n = 0 }
@@ -178,9 +172,9 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
   -- Ask for at most max_accel beyond drag (max_brake while a stop slows the
   -- hull): strong pushers driven to full take many seconds to spin up and
   -- down again, and overshoot.
-  local up = math.min(c.max_accel, self.accel_cap or math.huge)
+  local up = c.max_accel
   if self.target == 0 and accel ~= 0 and util.sign(accel) ~= util.sign(v) and math.abs(v) > 0.5 then
-    up = math.min(c.max_brake, self.accel_cap or math.huge)
+    up = c.max_brake
   end
   self.limited = 0
   if accel > up then accel = up; self.limited = 1 end
@@ -236,11 +230,8 @@ function M:command(s, dt, cap, applied_rpm, pending, fmax)
   -- Inside hold_band for two write intervals also captures: the paced
   -- writes can otherwise swing the pushers one slew step up and down every
   -- write around the target, and the preview never settles.
-  -- Position hold (accel_cap set) never holds: its targets are a few tenths
-  -- of a m/s, inside hold_band of a hull at rest, so it would never move.
   local projected = v + net_accel * horizon
-  if self.target ~= 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold
-    and not self.accel_cap then
+  if self.target ~= 0 and math.abs(self.v_ref - self.target) < 0.01 and not self.pitch_hold then
     local inside = math.abs(v - self.target) < c.hold_band
     self.in_band = inside and (self.in_band or 0) + dt or 0
     if self.held_f then

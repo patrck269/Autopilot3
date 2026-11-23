@@ -27,6 +27,7 @@ local FILES = {
   "ap3/recorder.lua",
   "ap3/rls.lua",
   "ap3/speed.lua",
+  "ap3/station.lua",
   "ap3/store.lua",
   "ap3/telemetry.lua",
   "ap3/util.lua",

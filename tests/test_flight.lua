@@ -692,7 +692,7 @@ do
     top = math.max(top, s.y)
     if s2.w.t - t0 > 40 then late_d = math.max(late_d, flat(s2, 10, -6)) end
   end)
-  check(late_d <= 2, "within 2 blocks for the last 20 s", string.format("worst %.2f", late_d))
+  check(late_d <= 0.5, "within 0.5 blocks for the last 20 s", string.format("worst %.2f", late_d))
   check(worst_hdg <= 10, "heading never more than 10 deg from 0", string.format("worst %.2f", worst_hdg))
   check(top < 202, "a translated stop does not climb to the transit floor", string.format("top %.2f", top))
   check(sim.ap.nav.phase == "ARRIVED", "phase ARRIVED", tostring(sim.ap.nav.phase))
@@ -748,7 +748,7 @@ do
     worst_y = math.max(worst_y, math.abs(s.y - 230))
   end)
   -- The bearing is held with the hover deadzone, like every hover (HDG_HOVER).
-  check(sim.ap.nav.phase == "ARRIVED" and worst_d <= 2 and worst_h <= HDG_HOVER and worst_y <= 1.0,
+  check(sim.ap.nav.phase == "ARRIVED" and worst_d <= 0.5 and worst_h <= HDG_HOVER and worst_y <= 1.0,
     "holds the point, bearing 270 (+-" .. HDG_HOVER .. ") and Y 230 for 20 s",
     string.format("d %.2f hdg %.2f y %.2f", worst_d, worst_h, worst_y))
   print(string.format("     arrived after %.1f s", arrived or -1))
@@ -784,7 +784,7 @@ do
   check(gs_there >= 5, "does not stop at the fly-through waypoint",
     string.format("%.2f m/s at %.1f blocks", gs_there, closest))
   check(low >= FLOOR - 1.5, "both legs cruise at " .. FLOOR, string.format("min %.2f", low))
-  check(arrived ~= nil and flat(sim, 200, 200) <= 2 and math.abs(util.wrap180(sim.s.hdg - 180)) <= 2
+  check(arrived ~= nil and flat(sim, 200, 200) <= 0.5 and math.abs(util.wrap180(sim.s.hdg - 180)) <= 2
     and math.abs(sim.s.y - 200) <= 1.0,
     "ARRIVED at the last leg, bearing 180, back down at Y 200",
     string.format("d %.2f hdg %.2f y %.2f arrived %s", flat(sim, 200, 200), sim.s.hdg, sim.s.y, tostring(arrived)))
@@ -811,24 +811,24 @@ do
   local x0, z0 = sim.w.x, sim.w.z
   dock("fwd", 5) -- heading north: 5 blocks toward -Z
   local d, e = settle(40, x0, z0 - 5, 200)
-  check(d <= 2 and e <= 1, "FWD 5 holds 5 blocks north", string.format("off %.2f, y err %.2f", d, e))
+  check(d <= 0.5 and e <= 0.5, "FWD 5 holds 5 blocks north", string.format("off %.2f, y err %.2f", d, e))
   dock("stbd", 2)
   d = settle(40, x0 + 2, z0 - 5, 200)
-  check(d <= 2, "STBD 2 then holds 2 blocks east", string.format("off %.2f", d))
+  check(d <= 0.5, "STBD 2 then holds 2 blocks east", string.format("off %.2f", d))
   dock("up", 5)
   d, e = settle(30, x0 + 2, z0 - 5, 205)
-  check(e <= 1 and d <= 2, "UP 5 holds 5 blocks higher in place", string.format("y err %.2f off %.2f", e, d))
+  check(e <= 0.5 and d <= 0.5, "UP 5 holds 5 blocks higher in place", string.format("y err %.2f off %.2f", e, d))
   dock("turn", 90)
   local worst_d = 0
   sim.run(60, function(s2) worst_d = math.max(worst_d, flat(s2, x0 + 2, z0 - 5)) end)
-  check(math.abs(util.wrap180(sim.s.hdg - 90)) <= HDG_HOVER and worst_d <= 2,
+  check(math.abs(util.wrap180(sim.s.hdg - 90)) <= HDG_HOVER and worst_d <= 0.5,
     "BRG +90 turns in place", string.format("hdg %.1f, worst off %.2f", sim.s.hdg, worst_d))
   dock("fwd", 10) -- now facing east
   dock("fwd", 10)
   dock("fwd", 10)
   local top = 0
   sim.run(120, function(_, s) top = math.max(top, s.y) end)
-  check(sim.ap.nav.phase == "ARRIVED" and flat(sim, x0 + 32, z0 - 5) <= 2,
+  check(sim.ap.nav.phase == "ARRIVED" and flat(sim, x0 + 32, z0 - 5) <= 0.5,
     "three FWD 10 presses add up to 30 blocks east",
     string.format("%s, off %.2f", tostring(sim.ap.nav.phase), flat(sim, x0 + 32, z0 - 5)))
   check(top < 207, "docking never climbs to the transit floor", string.format("top %.2f", top))
@@ -853,10 +853,10 @@ do
   pt = pt or { x = 0, z = 0 }
   local worst = 0
   sim.run(120, function(s2) worst = math.max(worst, flat(s2, pt.x, pt.z)) end)
-  check(worst <= 2, "stays within 2 blocks of it for 2 minutes", string.format("worst %.2f", worst))
+  check(worst <= 0.5, "stays within 0.5 blocks of it for 2 minutes", string.format("worst %.2f", worst))
   sim.ap:command({ c = "dock", v = { move = "stbd", n = 5 } }, sim.s)
   sim.run(60)
-  check(flat(sim, pt.x + 5, pt.z) <= 2, "a dock move from HOVER starts from the held point",
+  check(flat(sim, pt.x + 5, pt.z) <= 0.5, "a dock move from HOVER starts from the held point",
     string.format("off %.2f", flat(sim, pt.x + 5, pt.z)))
 end
 
@@ -877,7 +877,7 @@ for _, slew in ipairs({ 20, 16 }) do
   assert(ok, msg)
   local worst, t0 = 0, sim.w.t
   sim.run(150, function(s2) if s2.w.t - t0 > 90 then worst = math.max(worst, flat(s2, x, z)) end end)
-  check(worst <= 2.5, slew .. " RPM a tick: within 2.5 blocks of the point after 90 s",
+  check(worst <= 0.5, slew .. " RPM a tick: within 0.5 blocks of the point after 90 s",
     string.format("worst %.2f", worst))
 end
 
@@ -899,6 +899,41 @@ do
   sim.run(60, function(s2) lo = math.min(lo, s2.ap.spd.A) end)
   check(lo >= 0.8 * before, "a 90 deg turn at 20 m/s keeps A within 20%",
     string.format("%.1f -> min %.1f", before, lo))
+end
+
+print("42. Station keeping: under 0.5 blocks in every direction")
+-- In-game conditions: writes reach the props 0.4 s late, a slight steady push
+-- and random gusts, and pusher or RCS strength a quarter to four times what
+-- was learned in cruise (the live fore/aft swing came from 4x stronger
+-- pushers than believed).
+for _, case in ipairs({
+  { "as learned", {} },
+  { "pushers 4x stronger", { thrust_full = 128 } },
+  { "pushers 4x weaker", { thrust_full = 8 } },
+  { "RCS 3x stronger", { rcs_accel = 1.8 } },
+  { "RCS 3x weaker", { rcs_accel = 0.2 } },
+  { "moving 3 m/s when HOVER engages, slow props", { v_fwd = 3, prop_slew = 20, thrust_full = 128 } },
+}) do
+  math.randomseed(3)
+  local o = { y = 200, lift = 900, psi = 30, cmd_delay = 8, gust = 0.1, push_x = 0.02, push_z = -0.02,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } }
+  for k, v in pairs(case[2]) do o[k] = v end
+  local sim = plant.new(o)
+  sim.cmd("alt", 200)
+  sim.cmd("brg", 30)
+  sim.cmd("mode", "HOVER")
+  sim.run(60)
+  local pt = sim.ap.hover_pt or { x = math.huge, z = math.huge }
+  local wx, wy, wz = 0, 0, 0
+  sim.run(120, function(s2)
+    wx = math.max(wx, math.abs(s2.w.x - pt.x))
+    wz = math.max(wz, math.abs(s2.w.z - pt.z))
+    wy = math.max(wy, math.abs(s2.w.y - 200))
+  end)
+  check(wx < 0.5 and wz < 0.5 and wy < 0.5, case[1] .. ": held within 0.5 blocks for 2 minutes",
+    string.format("x %.2f z %.2f y %.2f", wx, wz, wy))
+  local score, id = sim.w.peak_flicker()
+  check(score < 128, case[1] .. ": bearing flicker stays below destruction threshold", tostring(id) .. ": " .. score)
 end
 
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))

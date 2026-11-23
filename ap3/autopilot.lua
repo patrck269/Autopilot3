@@ -7,8 +7,8 @@
 --           reached through a ramp that arrives within 15 s), slow down with
 --           reverse thrust, RCS keeps heading and cancels sideslip
 --   NAV     fly to a point or along a route (ap3/nav.lua): climb first,
---           transit bow-on, translate onto the point, descend last, turn to
---           the final bearing and hold position there
+--           transit bow-on, station-keep onto the point, descend last, turn
+--           to the final bearing and hold position there
 --   KILL    every motor to 0 at once; stays until another mode is chosen
 --   DEBUG   every motor at +debug_rpm as written to the block (the
 --           config sign is not applied), to see which way each prop pushes.
@@ -22,6 +22,7 @@ local rcscheck = require("ap3.rcscheck")
 local actuators = require("ap3.actuators")
 local level = require("ap3.level")
 local nav = require("ap3.nav")
+local station = require("ap3.station")
 
 local M = {}
 M.__index = M
@@ -51,7 +52,9 @@ function M.new(cfg, saved, sea_rho, tel, opts)
     motion = motion.new(cfg, tel),
     level = level.new(cfg),
     nav = nav.new(cfg, opts and opts.nav),
-    sway_target = nil, -- NAV HOLD: sideways velocity target, m/s to starboard
+    station = station.new(cfg),
+    station_pt = nil,  -- point station keeping holds this step ({ x, z }) or nil
+    sway_target = nil, -- sideways velocity target (m/s to starboard) outside station keeping
     rcs_off = opts ~= nil and opts.rcs_off == true,
     bow_learned = saved ~= nil and saved.bow ~= nil,
     rcs_map = saved and saved.rcs_map or nil, -- RCS layout from an earlier check (applied at start-up)
@@ -83,7 +86,8 @@ function M:engage(mode, s)
   end
   self.sway_target = nil
   self.spd_sent = nil
-  self.hover_pt, self.hover_state = nil, { hold_on = false }
+  self.hover_pt = nil
+  self.station:reset()
   -- Learning pauses in KILL and DEBUG; start fresh windows either side.
   self.alt.win, self.spd.win, self.hdg.win, self.motion.win = nil, nil, nil, nil
   if M.FLYING[mode] then
@@ -94,7 +98,6 @@ function M:engage(mode, s)
       self.spd:reset(s.v_fwd)
       self.level:reset()
     end
-    self.spd.accel_cap = nil
     if mode == "CRUISE" then
       self.spd:set_target(self.tgt.spd, s.v_fwd)
     else
@@ -104,37 +107,30 @@ function M:engage(mode, s)
   self:log("MODE " .. mode)
 end
 
--- HOVER holds the point where the hull came to rest: with the helm's brake
--- off a hull with almost no drag drifts otherwise. The point is taken once
--- ground speed is under nav.hover_capture and the bow axis is confirmed
--- (translation along a wrong axis runs away); the RCS check, 'rcs off' and
--- a new mode drop it.
+-- HOVER holds a point: with the helm's brake off a hull with almost no drag
+-- drifts otherwise. Once ground speed is under station.capture and the bow
+-- axis is confirmed (moving along a wrong axis runs away), the point is
+-- where the hull will come to rest braking at station.max_accel. The RCS
+-- check, 'rcs off' and a new mode drop it.
 function M:hover_hold(s)
-  local c = self.cfg.nav
-  local spd, side = 0, 0
+  local c = self.cfg.station
   if self.rcs_off or not (self.motion.frame_ok or self.bow_learned) then
     self.hover_pt = nil
-  else
-    if not self.hover_pt and s.gs < c.hover_capture then
-      self.hover_pt = { x = s.x, z = s.z }
-      self.hover_state.hold_on = false
-    end
-    if self.hover_pt then
-      spd, side = nav.translate(c, self.hover_state, self.hover_pt.x, self.hover_pt.z, s)
-    end
+  elseif not self.hover_pt and s.gs < c.capture then
+    local k = 1 / (2 * c.max_accel)
+    self.hover_pt = { x = s.x + s.vx * s.gs * k, z = s.z + s.vz * s.gs * k }
+    self.station:reset()
   end
   -- Until a point is held this is a plain stop: full braking, which also
   -- shows the bow axis.
-  self:speed_to(spd, c.hold_accel, s, self.hover_pt ~= nil)
-  self.sway_target = side
+  self.station_pt = self.hover_pt
+  if not self.hover_pt then self:speed_to(0, nil, s) end
+  self.sway_target = 0
 end
 
 -- Set the forward speed target, re-ramping only when it changes (set_target
--- plans the ramp from the reference's gap to it). hold: the target comes
--- from position hold, so ask for at most nav.hold_max_accel: big pusher
--- RPMs take seconds to reverse and keep a hold swinging past its point.
-function M:speed_to(spd, rate, s, hold)
-  self.spd.accel_cap = hold and self.cfg.nav.hold_max_accel or nil
+-- plans the ramp from the reference's gap to it).
+function M:speed_to(spd, rate, s)
   local sent = self.spd_sent
   if not sent or sent.spd ~= spd or sent.rate ~= rate then
     self.spd:set_target(spd, s.v_fwd, rate)
@@ -453,17 +449,40 @@ function M:step(s, now, dt, bank)
     self:finish_check()
   end
 
+  local was_station = self.station_pt ~= nil
+  self.station_pt = nil
   if self.mode == "NAV" then
     local cmd = self.nav:step(s, now)
     self.tgt.alt, self.tgt.brg, self.tgt.spd = cmd.alt, cmd.brg, cmd.spd
-    self:speed_to(cmd.spd, cmd.rate, s, cmd.hold)
+    self.station_pt = cmd.station
+    if not cmd.station then self:speed_to(cmd.spd, cmd.rate, s) end
     self.sway_target = cmd.side
   elseif self.mode == "HOVER" then
     self:hover_hold(s)
   end
+  if self.rcs_off then self.station_pt = nil end
+  local pt = self.station_pt
+  if was_station and not pt then
+    -- Station keeping drove the pushers directly: the speed loop restarts
+    -- from the speed the hull has now.
+    self.spd:reset(s.v_fwd)
+    self.spd_sent = nil
+  end
   self:put_lift(out, self.alt:command(s, self.tgt.alt, dt, self.caps.lift_bow_port), s, dt)
+
+  local rcs_set = {}
+  for _, id in ipairs(RCS) do rcs_set[id] = bank:applied(id) end
+  local u_set, sw_set = heading.applied(rcs_set, self.caps)
+  local auth = math.max(self.motion:sway_authority(), cfg.heading.min_sway_authority)
+  local pending = util.ssq(thr_applied) / (thr_cap * thr_cap) - thr_f
   local T = 0
-  if self.rcs_off and self.spd.target == 0 then
+  local sway_force = nil
+  if pt then
+    local f, sw = self.station:command(s, pt.x, pt.z, dt, now, self.spd.A, auth, thr_f, sw_now, pending, sw_set - sw_now)
+    T = util.round(util.ssqrt(util.clamp(f, -1, 1)) * thr_cap)
+    sway_force = sw
+    self.spd.phase = "STATION"
+  elseif self.rcs_off and self.spd.target == 0 then
     -- At zero target the pushers are fore/aft RCS, not cruise propulsion.
     -- Release them to the helm too; do not integrate against manual drift.
     self.pusher_released = true
@@ -473,21 +492,20 @@ function M:step(s, now, dt, bank)
       self.spd:reset(s.v_fwd)
       self.pusher_released = false
     end
-    local pending = util.ssq(thr_applied) / (thr_cap * thr_cap) - thr_f
     -- Until the bow axis is confirmed, thrust along a wrong axis would run
     -- away: the pushers only probe (enough force for the bow to be learned).
     local fmax = (self.motion.frame_ok or self.bow_learned) and 1 or cfg.speed.probe_force
     T = self.spd:command(s, dt, thr_cap, thr_applied, pending, fmax)
   end
   out.thrust_port, out.thrust_stbd = T, T
-  local station = self.mode == "HOVER" or (self.mode == "NAV" and self.nav.phase ~= "TRANSIT")
-  local deadzone = station and cfg.heading.hover_deadzone or cfg.heading.cruise_deadzone
+  local holding = self.mode == "HOVER" or (self.mode == "NAV" and self.nav.phase ~= "TRANSIT")
+  local deadzone = holding and cfg.heading.hover_deadzone or cfg.heading.cruise_deadzone
   -- Until the frame is confirmed (or learned), a wrong axis would make the
   -- sideways brake push the wrong way: keep it gentle.
-  local auth = self.motion:sway_authority()
   local sway = {
     drift = s.v_side, target = self.sway_target or 0, auth = auth, coming = auth * sw_now * cfg.heading.sway_lag,
     limit = (self.motion.frame_ok or self.bow_learned) and 1 or cfg.heading.probe_limit,
+    force = sway_force,
   }
   if self.rcs_off then
     -- The Eureka helm steers: the RCS rests and the heading loop starts
@@ -496,9 +514,6 @@ function M:step(s, now, dt, bank)
     self.hdg:reset()
     self.rcs_full_since = nil
   else
-    local rcs_set = {}
-    for _, id in ipairs(RCS) do rcs_set[id] = bank:applied(id) end
-    local u_set = heading.applied(rcs_set, self.caps)
     local u, sw = self.hdg:command(s, self.tgt.brg, dt, deadzone, sway, u_set - u_now)
     -- Pulling at full and still off the bearing: the RCS can't hold this
     -- (e.g. thrust line too far off centre for the RCS cap).
