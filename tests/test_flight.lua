@@ -1042,5 +1042,33 @@ do
     string.format("believed %.1f, true %.1f m/s^2 at full", believed, true_full))
 end
 
+print("47. A ship that stops ticking pauses control")
+-- In game the ship's chunk stopped ticking at Y 120: telemetry repeated the
+-- same sample, the hover learner fitted 5100 RPM and the lift went to the
+-- 5500 cap, ready to fling the hull up when it ticked again.
+do
+  local sim = plant.new({ y = 200, lift = 900, psi = 0,
+    saved = { k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } } })
+  sim.cmd("alt", 200)
+  sim.cmd("mode", "HOVER")
+  sim.run(40)
+  local k0 = sim.ap.alt.k
+  sim.w.frozen = true
+  sim.run(600)
+  local paused = false
+  for _, a in ipairs(sim.ap:alerts(sim.s, sim.w.t)) do if a:find("CONTROL PAUSED", 1, true) then paused = true end end
+  check(paused, "the pause is shown")
+  check(math.abs(sim.ap.alt.k / k0 - 1) < 0.05, "the hover calibration is not relearned while frozen",
+    string.format("k x%.2f", sim.ap.alt.k / k0))
+  local hover = sim.ap.alt:hover_rpm(sim.s.rho)
+  check(math.abs(sim.w.cmd.lift_bow_port - hover) < 0.1 * hover, "the lift waits at the hover RPM",
+    string.format("%d RPM, hover %.0f", sim.w.cmd.lift_bow_port, hover))
+  sim.w.frozen = false
+  local lo, hi = math.huge, -math.huge
+  sim.run(30, function(_, s) lo, hi = math.min(lo, s.y), math.max(hi, s.y) end)
+  check(hi - 200 < 2 and 200 - lo < 2, "ticking again, altitude stays within 2 blocks",
+    string.format("%.2f..%.2f", lo, hi))
+end
+
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
 os.exit(failures == 0 and 0 or 1)

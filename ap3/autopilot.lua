@@ -394,6 +394,30 @@ function M:step(s, now, dt, bank)
     return out
   end
 
+  -- A ship whose chunk is not ticking reports the same position and
+  -- velocity every sample. Control and learning on it wind up: in game the
+  -- hover learner decided the lift needed 5100 RPM and drove it to the cap.
+  -- After freeze_time of identical samples, stop learning and controlling:
+  -- the lift waits at the believed hover RPM, pushers and RCS at 0.
+  local p = self.prev_raw
+  -- (A hull at rest on the ground also repeats itself, with zero velocity.)
+  if p and p.x == s.x and p.y == s.y and p.z == s.z and p.vx == s.vx and p.vy == s.vy and p.vz == s.vz
+    and not self.alt.grounded and (s.vx ~= 0 or s.vy ~= 0 or s.vz ~= 0) then
+    self.frozen_for = (self.frozen_for or 0) + dt
+  else
+    self.frozen_for = 0
+  end
+  self.prev_raw = { x = s.x, y = s.y, z = s.z, vx = s.vx, vy = s.vy, vz = s.vz }
+  self.frozen = M.FLYING[self.mode] and self.frozen_for > cfg.freeze_time
+  if self.frozen then
+    self.alt.win, self.spd.win, self.hdg.win, self.motion.win, self.station.win = nil, nil, nil, nil, nil
+    local hover = util.round(util.clamp(self.alt:hover_rpm(s.rho), 0, self.caps.lift_bow_port))
+    for _, id in ipairs(actuators.GROUPS.lift) do out[id] = hover end
+    out.thrust_port, out.thrust_stbd = 0, 0
+    for _, id in ipairs(RCS) do out[id] = 0 end
+    return out
+  end
+
   local flying = M.FLYING[self.mode]
   local want_up = flying and self.tgt.alt ~= nil and self.tgt.alt > s.y + cfg.altitude.hold_band
   -- Learning uses the force the props are really making (their modelled
@@ -549,6 +573,7 @@ end
 function M:alerts(s, now)
   local list = {}
   if self.mode == "KILL" then list[#list + 1] = "KILL: ALL THRUST CUT" end
+  if self.frozen then list[#list + 1] = "SHIP NOT MOVING (CHUNK NOT TICKING?): CONTROL PAUSED" end
   if self.rcs_off then list[#list + 1] = "RCS OFF: HELM STEERS" end
   if self.mode == "DEBUG" then
     list[#list + 1] = "DEBUG: ALL PROPS AT +" .. self.cfg.debug_rpm .. " RPM, LIFT TOO"

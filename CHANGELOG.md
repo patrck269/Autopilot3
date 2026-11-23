@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A ship whose chunk stops ticking reports the same position and velocity every sample. After 1 s of that (`freeze_time`), control and learning pause and SYS shows "SHIP NOT MOVING (CHUNK NOT TICKING?): CONTROL PAUSED"; the lift waits at the believed hover RPM, pushers and RCS at 0. In game the hover learner had fitted 5100 RPM to a frozen hull at Y 120 and driven the lift to the 5500 cap; in the model, 10 frozen minutes made the old build's calibration 36 times too weak and the hull fell to the ground when it ticked again. A reboot no longer seeds the hover from the lift RPM when a calibration is saved.
 - Pusher, RCS turning, RCS sideways and station-keeping strengths are kept at sea-level air density and scaled by the density at the hull. Learned at Y 600, the pushers were believed half as strong as they were at Y 150 (in the model: 16 against 28 m/s² at full; now 28). Saved strengths now mean sea level, and `speed.max_accel_full` is 250 to match (in-game fits gave 37–166).
 - NAV HOLD brakes with the speed loop until the ship is under 0.5 m/s and the pushers no longer push (`nav.stop_speed`, `nav.stop_push`), then station keeping takes over. In game it handed over at 2.9 m/s and passed the point by 10 blocks; in the model it now stops short (0.2 past, 7.9 before).
 - The descent starts only once the ship is within 3 blocks and nearly stopped. A descent paused by a drift brakes and holds the height where it stopped instead of climbing back (in game it fell 9–19 blocks below the pause and climbed back; in the model 0.6, against 6.4).

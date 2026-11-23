@@ -159,6 +159,10 @@ return {
     yaw_lag = 1.0,        -- s: lead on yaw rate, including the enforced per-motor write interval
   },
 
+  -- Identical position and velocity for this many seconds: the ship is not
+  -- being simulated (chunk not ticking); control and learning pause.
+  freeze_time = 1.0,
+
   -- NAV: 'goto' and routes (see ap3/nav.lua).
   nav = {
     speed = 25,            -- default transit speed, m/s ('spd' changes it while NAV flies)

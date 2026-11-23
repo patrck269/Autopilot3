@@ -179,6 +179,8 @@ function W.new(motors, opts, gravity)
   local target = {}
   for id in pairs(motors) do target[id] = w.cmd[id] end
   function w.step(dt)
+    -- w.frozen: the ship's chunk is not ticking (nothing moves; motors still take writes).
+    if w.frozen then return end
     local rho = W.rho(w.y)
     -- Writes reach the props pusher_delay or rcs_delay ticks later.
     local keep = {}

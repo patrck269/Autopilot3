@@ -63,7 +63,9 @@ function M.run(cfg, opts)
   -- current altitude instead of letting the hull drift.
   local lift = bank:effective("lift")
   if lift > 0 then
-    if math.abs(last_s.vy) < 0.5 then ap.alt:seed_from_hover(lift, last_s.rho) end
+    -- Seed the hover from the lift only without a saved calibration: a ship
+    -- that was not ticking leaves the lift wherever a wound-up loop put it.
+    if math.abs(last_s.vy) < 0.5 and not (saved and saved.k) then ap.alt:seed_from_hover(lift, last_s.rho) end
     ap.tgt.alt = util.round(last_s.y)
     ap:engage("HOVER", last_s)
   end
