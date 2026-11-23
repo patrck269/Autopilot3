@@ -936,5 +936,33 @@ for _, case in ipairs({
   check(score < 128, case[1] .. ": bearing flicker stays below destruction threshold", tostring(id) .. ": " .. score)
 end
 
+print("43. Station keeping after a reboot keeps the learned strengths")
+-- In game a reboot started from the speed loop's belief again, and the first
+-- 40 s swung 2.5 blocks before each axis had relearned its gain.
+do
+  local function hull(saved, v0)
+    math.randomseed(5)
+    local sim = plant.new({ y = 200, lift = 900, psi = 30, cmd_delay = 8, gust = 0.1, thrust_full = 128, v_fwd = v0,
+      saved = saved })
+    sim.cmd("alt", 200)
+    sim.cmd("brg", 30)
+    sim.cmd("mode", "HOVER")
+    return sim
+  end
+  local first = hull({ k = 10 / (plant.rho(62) * 900 * 900), bow = { x = 1, y = 0, z = 0 } }, 0)
+  first.run(90)
+  local saved = first.ap:saved()
+  check(saved.station ~= nil and saved.station.f > 1.5 * saved.A * 0.82, "the stronger pushers are learned and saved",
+    string.format("%s m/s^2 at full (speed loop: %.1f)", tostring(saved.station and saved.station.f), saved.A))
+  local sim = hull(saved, 0.3)
+  local pt, worst = nil, 0
+  sim.run(90, function(s2)
+    pt = pt or s2.ap.hover_pt
+    if pt then worst = math.max(worst, math.sqrt((s2.w.x - pt.x) ^ 2 + (s2.w.z - pt.z) ^ 2)) end
+  end)
+  check(pt ~= nil and worst < 0.5, "after the reboot the point is held within 0.5 blocks from the start",
+    string.format("worst %.2f", worst))
+end
+
 print(failures == 0 and "ALL FLIGHT CHECKS PASSED" or (failures .. " FLIGHT CHECK(S) FAILED"))
 os.exit(failures == 0 and 0 or 1)

@@ -32,7 +32,7 @@ M.MODES = { STBY = true, HOVER = true, CRUISE = true, NAV = true, KILL = true, D
 M.FLYING = { HOVER = true, CRUISE = true, NAV = true }
 local RCS = actuators.GROUPS.rcs
 
--- saved: prior calibration ({ k =, A =, Dn =, yaw_b =, rcs_cap =, bow = }) or nil.
+-- saved: prior calibration ({ k =, A =, Dn =, yaw_b =, rcs_cap =, bow =, station = }) or nil.
 -- sea_rho: air density at sea level (seeds the hover guess).
 -- tel: telemetry; the learned bow axis is applied to it.
 -- opts: { rcs_off = true while the helm steers (survives a reboot),
@@ -52,7 +52,7 @@ function M.new(cfg, saved, sea_rho, tel, opts)
     motion = motion.new(cfg, tel),
     level = level.new(cfg),
     nav = nav.new(cfg, opts and opts.nav),
-    station = station.new(cfg),
+    station = station.new(cfg, saved),
     station_pt = nil,  -- point station keeping holds this step ({ x, z }) or nil
     sway_target = nil, -- sideways velocity target (m/s to starboard) outside station keeping
     rcs_off = opts ~= nil and opts.rcs_off == true,
@@ -589,6 +589,7 @@ function M:saved()
     -- start of the next flight.
     bow = (self.bow_learned or self.motion.frame_ok) and { x = f.x, y = f.y, z = f.z } or nil,
     rcs_map = self.rcs_map,
+    station = self.station:saved(),
   }
 end
 

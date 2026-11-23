@@ -25,13 +25,22 @@ M.__index = M
 
 local AXES = { "f", "s" } -- f: along the bow (pushers), s: to starboard (RCS)
 
-function M.new(cfg)
-  local self = setmetatable({ c = cfg.station, ix = 0, iz = 0, hist = {}, win = nil, gain = {}, est = {} }, M)
+-- saved: the calibration table; its `station` = { f =, s = } holds the
+-- absolute strengths (m/s^2 at full) learned on an earlier flight.
+function M.new(cfg, saved)
+  local seed = saved and type(saved.station) == "table" and saved.station or nil
+  if seed and not (util.finite(seed.f) and seed.f > 0 and util.finite(seed.s) and seed.s > 0) then seed = nil end
+  local self = setmetatable({ c = cfg.station, ix = 0, iz = 0, hist = {}, win = nil, gain = {}, est = {}, seed = seed }, M)
   for _, k in ipairs(AXES) do
     self.gain[k] = 1
     self.est[k] = rls.new({ 1, 0 }, { 4, 0.01 }, cfg.station.learn_forget)
   end
   return self
+end
+
+-- Strengths to save: m/s^2 at full per axis, or nil before any were used.
+function M:saved()
+  return self.abs
 end
 
 -- Forget the integral (a new point or a new mode). The learned gains stay.
@@ -94,7 +103,16 @@ end
 -- Returns pusher force f and sway force sw (normalised) and the distance.
 function M:command(s, x, z, dt, now, A, auth, f_prop, sw_prop, pend_f, pend_sw)
   local c = self.c
+  if self.seed then
+    -- Strengths from an earlier flight, against this flight's speed and sway loops.
+    for k, base in pairs({ f = A, s = auth }) do
+      self.gain[k] = util.clamp(self.seed[k] / base, c.min_gain, c.max_gain)
+      self.est[k].t[1] = self.gain[k]
+    end
+    self.seed = nil
+  end
   local A_f, A_s = A * self.gain.f, auth * self.gain.s
+  self.abs = { f = A_f, s = A_s }
   self:observe(s, now, { f = A * f_prop, s = auth * sw_prop })
 
   local h = math.rad(s.hdg)
