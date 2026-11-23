@@ -1058,7 +1058,7 @@ do
   local paused = false
   for _, a in ipairs(sim.ap:alerts(sim.s, sim.w.t)) do if a:find("CONTROL PAUSED", 1, true) then paused = true end end
   check(paused, "the pause is shown")
-  check(math.abs(sim.ap.alt.k / k0 - 1) < 0.05, "the hover calibration is not relearned while frozen",
+  check(math.abs(sim.ap.alt.k / k0 - 1) < 0.01, "the hover calibration is not relearned while frozen",
     string.format("k x%.2f", sim.ap.alt.k / k0))
   local hover = sim.ap.alt:hover_rpm(sim.s.rho)
   check(math.abs(sim.w.cmd.lift_bow_port - hover) < 0.1 * hover, "the lift waits at the hover RPM",

@@ -431,16 +431,22 @@ function M:step(s, now, dt, bank)
   -- The hover is learned only while the autopilot flies the hull. Parked
   -- with the lift turning (STBY after DEBUG leaves 15 RPM on it), a hull
   -- resting on its moorings would teach that 15 RPM hovers.
-  if flying then
-    self.alt:observe(s, lift_prop, now, want_up)
-  end
-  self.spd:observe(s, thr_f, now)
-  if self.check then
-    -- Single corners at full are not normal flight: learn nothing from them.
-    self.hdg.win, self.motion.win = nil, nil
+  -- A sample identical to the last one (a ship that is not ticking) teaches
+  -- nothing: live, one second of them moved the hover calibration 20%.
+  if (self.frozen_for or 0) > 0 then
+    self.alt.win, self.spd.win, self.hdg.win, self.motion.win, self.station.win = nil, nil, nil, nil, nil
   else
-    self.hdg:observe(s, u_now, now)
-    self.motion:observe(s, thr_f, sw_now, now)
+    if flying then
+      self.alt:observe(s, lift_prop, now, want_up)
+    end
+    self.spd:observe(s, thr_f, now)
+    if self.check then
+      -- Single corners at full are not normal flight: learn nothing from them.
+      self.hdg.win, self.motion.win = nil, nil
+    else
+      self.hdg:observe(s, u_now, now)
+      self.motion:observe(s, thr_f, sw_now, now)
+    end
   end
 
   -- The rear thrusters showed the bow is on another axis than configured:
